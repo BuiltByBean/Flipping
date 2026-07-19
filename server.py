@@ -186,7 +186,10 @@ def sync():
                         INSERT INTO items (id, data, updated_at, deleted, synced_at)
                         VALUES %s
                         ON CONFLICT (id) DO UPDATE SET
-                            data       = EXCLUDED.data,
+                            -- jsonb merge, not replace: keys the pushing client
+                            -- doesn't know about (older app versions) survive
+                            -- from the stored copy instead of being stripped
+                            data       = items.data || EXCLUDED.data,
                             updated_at = EXCLUDED.updated_at,
                             deleted    = EXCLUDED.deleted,
                             synced_at  = EXCLUDED.synced_at

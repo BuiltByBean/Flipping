@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.11.0';
+const APP_VERSION = '1.12.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -123,7 +123,11 @@ const daysHeld = (it) => {
 /* ---------------- item model ---------------- */
 function normItem(r) {
   r = r || {};
-  const o = {
+  // IMPORTANT: build over a copy of the raw record so fields this app
+  // version doesn't know about survive the round-trip. An older cached
+  // client once rebuilt items with only ITS known fields and stripped
+  // newer flags (lost a lbExempt on sync) — never again.
+  const o = Object.assign({}, r, {
     id: r.id ? String(r.id) : uid(),
     name: String(r.name || '').slice(0, 120),
     category: CATS.some((c) => c[0] === r.category) ? r.category : 'other',
@@ -159,7 +163,7 @@ function normItem(r) {
           .map((f) => ({ c: Math.round(f.c * 100) / 100, note: String(f.note || '').slice(0, 80), d: validYMD(f.d) }))
           .slice(0, 100)
       : [],
-  };
+  });
   if (!o.priceHistory.length && o.listPrice != null) o.priceHistory = [{ p: o.listPrice, d: o.buyDate }];
   // legacy single "extra costs" number becomes the first itemized fix-up entry
   if (o.extraCosts > 0 && !o.fixes.length) {
