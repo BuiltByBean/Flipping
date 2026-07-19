@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -165,16 +165,27 @@ const store = (() => {
 
   function init() {
     return new Promise((resolve) => {
-      if (!('indexedDB' in window)) { useLS = true; return resolve(); }
+      let settled = false;
+      const settle = (ls) => { if (settled) return; settled = true; if (ls) useLS = true; resolve(); };
+      if (!('indexedDB' in window)) return settle(true);
+      // iOS Safari can leave open() hanging (blocked delete, versionchange,
+      // cold-start bugs) — never let a storage stall keep the app blank.
+      const guard = setTimeout(() => settle(true), 2500);
       let req;
-      try { req = indexedDB.open('flips-db', 1); } catch (e) { useLS = true; return resolve(); }
+      try { req = indexedDB.open('flips-db', 1); } catch (e) { clearTimeout(guard); return settle(true); }
       req.onupgradeneeded = () => {
         if (!req.result.objectStoreNames.contains('items')) {
           req.result.createObjectStore('items', { keyPath: 'id' });
         }
       };
-      req.onsuccess = () => { db = req.result; resolve(); };
-      req.onerror = () => { useLS = true; resolve(); };
+      req.onsuccess = () => {
+        clearTimeout(guard);
+        if (settled) { try { req.result.close(); } catch (e) {} return; } // already fell back to LS this session
+        db = req.result;
+        settle(false);
+      };
+      req.onerror = () => { clearTimeout(guard); settle(true); };
+      req.onblocked = () => { clearTimeout(guard); settle(true); };
     });
   }
   const os = (mode) => db.transaction('items', mode).objectStore('items');
