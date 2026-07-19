@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.9.0';
+const APP_VERSION = '1.10.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -451,108 +451,9 @@ function computeTaxes(year) {
   return { year: String(year), sold, net, se, incomeTax, qbiDed, total, eff, afterTax: net - total, cfg };
 }
 
-/* ---------------- monthly chart ---------------- */
-let chartData = [];
-function chartSVG() {
-  const sold = live().filter(isSold);
-  // only months that actually have sales — no empty filler months
-  let keys = Array.from(new Set(sold.map((i) => monthKey(i.sellDate)).filter(Boolean))).sort();
-  if (keys.length > 12) keys = keys.slice(-12);
-  chartData = keys.map((k) => {
-    let v = 0, n = 0;
-    sold.forEach((i) => { if (monthKey(i.sellDate) === k) { v += profitOf(i); n++; } });
-    return { k, v, n };
-  });
-  const hasData = chartData.length > 0;
-  const W = 360, H = 172, padT = 18, padB = 24;
-  const plotH = H - padT - padB;
-  const slot = W / Math.max(chartData.length, 1);
-  const bw = Math.min(44, slot * 0.58);
-  const multiYear = new Set(keys.map((k) => k.slice(0, 4))).size > 1;
-  const mlbl = (k) => {
-    const [y, m] = k.split('-').map(Number);
-    const nm = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short' });
-    return multiYear ? nm + ' ' + String(y).slice(2) : nm;
-  };
+const GEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="15" cy="6" r="2.3" fill="#0a100e"/><circle cx="9" cy="12" r="2.3" fill="#0a100e"/><circle cx="16" cy="18" r="2.3" fill="#0a100e"/></svg>';
+const gearBtnHTML = () => '<button class="gearbtn" data-view="settings" aria-label="Settings">' + GEAR_SVG + '</button>';
 
-  let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
-  svg += '<defs><linearGradient id="gpos" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#0d9488"/></linearGradient>' +
-    '<linearGradient id="gneg" x1="0" y1="0" x2="0" y2="1">' +
-    '<stop offset="0" stop-color="#e11d48"/><stop offset="1" stop-color="#fb7185"/></linearGradient></defs>';
-
-  if (!hasData) {
-    const ghost = [28, 52, 38, 66, 44, 78, 50, 88, 58, 72, 46, 82];
-    const gslot = W / 12, gbw = Math.min(20, gslot * 0.58);
-    ghost.forEach((g, i) => {
-      const h = (g / 100) * plotH;
-      const x = i * gslot + (gslot - gbw) / 2;
-      svg += '<rect x="' + x.toFixed(1) + '" y="' + (padT + plotH - h).toFixed(1) + '" width="' + gbw.toFixed(1) +
-        '" height="' + h.toFixed(1) + '" rx="4.5" fill="rgba(255,255,255,.05)"/>';
-    });
-    lastMonths(12).forEach((k, i) => {
-      const mi = Number(k.slice(5)) - 1;
-      svg += '<text class="axm" x="' + (i * gslot + gslot / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle">' +
-        'JFMAMJJASOND'[mi] + '</text>';
-    });
-    return svg + '</svg>';
-  }
-
-  let max = Math.max(0, ...chartData.map((d) => d.v));
-  let min = Math.min(0, ...chartData.map((d) => d.v));
-  if (max === 0 && min === 0) max = 1;
-  const range = max - min;
-  const y = (v) => padT + ((max - v) / range) * plotH;
-  const zeroY = y(0);
-
-  if (max > 0) {
-    svg += '<line x1="0" x2="' + W + '" y1="' + y(max).toFixed(1) + '" y2="' + y(max).toFixed(1) +
-      '" stroke="rgba(255,255,255,.06)" stroke-dasharray="3 4"/>' +
-      '<text class="axv" x="' + W + '" y="' + (y(max) - 4).toFixed(1) + '" text-anchor="end">' + money(max) + '</text>';
-  }
-  svg += '<line x1="0" x2="' + W + '" y1="' + zeroY.toFixed(1) + '" y2="' + zeroY.toFixed(1) + '" stroke="rgba(255,255,255,.12)"/>';
-
-  chartData.forEach((d, i) => {
-    const x = i * slot + (slot - bw) / 2;
-    let yy, h, fill;
-    if (d.v >= 0) {
-      yy = y(d.v); h = zeroY - yy; fill = 'url(#gpos)';
-      if (h < 3) { h = d.n ? 3 : 2; yy = zeroY - h; if (!d.n) fill = 'rgba(255,255,255,.08)'; }
-    } else {
-      yy = zeroY; h = Math.max(3, y(d.v) - zeroY); fill = 'url(#gneg)';
-    }
-    const rx = Math.min(4.5, h / 2);
-    svg += '<rect id="bar-' + i + '" class="bar' + (i === chartData.length - 1 ? ' sel' : '') + '" x="' + x.toFixed(1) +
-      '" y="' + yy.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="' + rx.toFixed(1) +
-      '" fill="' + fill + '"/>';
-  });
-  keys.forEach((k, i) => {
-    const cur = i === keys.length - 1 ? ' cur' : '';
-    svg += '<text class="axm' + cur + '" x="' + (i * slot + slot / 2).toFixed(1) + '" y="' + (H - 7) +
-      '" text-anchor="middle">' + mlbl(k) + '</text>';
-  });
-  chartData.forEach((d, i) => {
-    svg += '<rect data-mi="' + i + '" x="' + (i * slot).toFixed(1) + '" y="0" width="' + slot.toFixed(1) +
-      '" height="' + H + '" fill="rgba(0,0,0,0)" style="cursor:pointer"/>';
-  });
-  return svg + '</svg>';
-}
-function mdetailHTML(i) {
-  const d = chartData[i];
-  if (!d) return '';
-  const cls = d.v >= 0 ? 'pos' : 'neg';
-  return '<b>' + monthLong(d.k) + '</b> &nbsp;·&nbsp; <b class="' + cls + '" style="color:var(--' + cls + ')">' +
-    money(d.v, true) + '</b> profit &nbsp;·&nbsp; ' + d.n + ' sold';
-}
-function selectChartBar(i) {
-  $$('.bar.sel').forEach((b) => b.classList.remove('sel'));
-  const bar = $('#bar-' + i);
-  if (bar) bar.classList.add('sel');
-  const md = $('#mdetail');
-  if (md) md.innerHTML = mdetailHTML(i);
-}
-
-/* ---------------- brand mark ---------------- */
 const MARK_SVG = '<svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">' +
   '<defs><linearGradient id="mg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#0d9488"/></linearGradient></defs>' +
   '<rect width="64" height="64" rx="15" fill="#122019"/>' +
@@ -563,7 +464,7 @@ const MARK_SVG = '<svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org
 function renderDashboard() {
   const s = computeStats();
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  let h = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b>' + syncPillHTML() + '<span class="date">' + dateStr + '</span></div>';
+  let h = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b>' + syncPillHTML() + '<span class="date">' + dateStr + '</span>' + gearBtnHTML() + '</div>';
 
   if (!live().length) {
     h += '<div class="card hero rise" style="text-align:center;padding:34px 20px">' +
@@ -596,13 +497,6 @@ function renderDashboard() {
     (s.pricedCount ? 'if all sell at ask' + (s.unpricedCount ? ' · ' + s.unpricedCount + ' unpriced' : '') : 'no asking prices set') + '</div></div>' +
     '</div>';
 
-  const chartHtml = chartSVG();
-  h += '<div class="card rise" style="animation-delay:.1s" id="chartcard">' +
-    '<h2>Profit by month <span class="hint">tap a bar</span></h2>' +
-    '<div class="chart-wrap">' + chartHtml + '</div>' +
-    '<div id="mdetail">' + (chartData.length ? mdetailHTML(chartData.length - 1) : '') + '</div>' +
-    '</div>';
-
   const lb = leaderboardRows();
   if (lb.length) {
     const maxAbs = Math.max(...lb.map((r) => Math.abs(r.profit)), 1);
@@ -619,17 +513,6 @@ function renderDashboard() {
           '<span class="lb-p ' + (r.profit >= 0 ? 'pos' : 'neg') + '">' + money(r.profit, true) + '</span></div>';
       }).join('') + '</div>';
   }
-
-  const tx = computeTaxes(defaultTaxYear());
-  h += '<div class="card rise" style="animation-delay:.15s;cursor:pointer" data-action="taxes">' +
-    '<h2>Taxes <span class="hint">est. ' + tx.year + ' · tap for breakdown</span></h2>' +
-    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
-    '<span style="font-size:26px;font-weight:800;font-variant-numeric:tabular-nums">' + money(tx.total) + '</span>' +
-    '<span style="color:var(--sub);font-size:13px">' +
-    (tx.net > 0
-      ? 'set aside ≈' + Math.round(tx.eff * 100) + '% · after-tax ' + money(tx.afterTax, true)
-      : (tx.net < 0 ? 'net loss — nothing owed' : 'no sales yet in ' + tx.year)) +
-    '</span></div></div>';
 
   if (s.sold.length) {
     const cats = groupBy(s.sold, (i) => i.category, catLabel).slice(0, 6);
@@ -730,11 +613,31 @@ function renderInvList() {
       (invQuery ? '' : '<button class="btn btn-primary" data-action="add">+ Add a flip</button>') + '</div>';
     return;
   }
-  box.innerHTML = list.map(invItemHTML).join('');
+
+  // sectioned by owner — device person first, busiest next, Unassigned last
+  const groups = new Map();
+  list.forEach((it) => {
+    const k = it.owner || '';
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(it);
+  });
+  const named = Array.from(groups.keys()).filter((k) => k);
+  if (!named.length) { box.innerHTML = list.map(invItemHTML).join(''); return; }
+  named.sort((a, b) => groups.get(b).length - groups.get(a).length || a.localeCompare(b));
+  const me = syncState.person;
+  if (me && named.includes(me)) { named.splice(named.indexOf(me), 1); named.unshift(me); }
+  const keys = named.concat(groups.has('') ? [''] : []);
+  box.innerHTML = keys.map((k) => {
+    const arr = groups.get(k);
+    const tied = arr.reduce((a, i) => a + costOf(i), 0);
+    return '<div class="mgroup"><b>' + (k ? esc(k) : 'Unassigned') + '</b><span>' +
+      arr.length + ' item' + (arr.length === 1 ? '' : 's') + ' · ' + money(tied) + ' in</span></div>' +
+      arr.map(invItemHTML).join('');
+  }).join('');
 }
 function renderInventory() {
   $('#view').innerHTML =
-    '<div class="lt rise"><h1>Inventory</h1><div class="sub">Stuff you’re holding, waiting to sell</div></div>' +
+    '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Inventory</h1><div class="sub">Stuff you’re holding, waiting to sell</div></div>' + gearBtnHTML() + '</div>' +
     '<div class="toolbar rise">' +
     '<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>' +
     '<input id="inv-q" type="search" placeholder="Search inventory" value="' + esc(invQuery) + '" autocomplete="off"></div>' +
@@ -799,7 +702,7 @@ function renderSoldList() {
 }
 function renderSold() {
   $('#view').innerHTML =
-    '<div class="lt rise"><h1>Sold</h1><div class="sub">Every flip you’ve closed out</div></div>' +
+    '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Sold</h1><div class="sub">Every flip you’ve closed out</div></div>' + gearBtnHTML() + '</div>' +
     '<div class="toolbar rise">' +
     '<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>' +
     '<input id="sold-q" type="search" placeholder="Search sales" value="' + esc(soldQuery) + '" autocomplete="off"></div>' +
@@ -843,6 +746,8 @@ function renderSettings() {
     peopleChipsHTML('person', syncState.person || '') +
     '<div style="margin-top:14px"><button class="btn" data-action="sync-now" style="width:100%">Sync now</button></div>' +
     '</div>' +
+
+    taxesCardHTML('.02s') +
 
     '<div class="card rise" style="animation-delay:.03s"><h2>Backup &amp; export</h2>' +
     '<div class="srow"><div class="ic">💾</div><div class="tx"><b>Export backup</b><small>Full JSON — photos included</small></div><button class="btn btn-mini" data-action="export-json">Export</button></div>' +
@@ -1311,6 +1216,18 @@ function refreshTaxes() {
   const b = $('#tax-body');
   if (b) b.innerHTML = taxBodyHTML();
 }
+function taxesCardHTML(delay) {
+  const tx = computeTaxes(defaultTaxYear());
+  return '<div class="card rise" style="animation-delay:' + delay + ';cursor:pointer" data-action="taxes">' +
+    '<h2>Taxes <span class="hint">est. ' + tx.year + ' · tap for breakdown</span></h2>' +
+    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
+    '<span style="font-size:26px;font-weight:800;font-variant-numeric:tabular-nums">' + money(tx.total) + '</span>' +
+    '<span style="color:var(--sub);font-size:13px">' +
+    (tx.net > 0
+      ? 'set aside ≈' + Math.round(tx.eff * 100) + '% · after-tax ' + money(tx.afterTax, true)
+      : (tx.net < 0 ? 'net loss — nothing owed' : 'no sales yet in ' + tx.year)) +
+    '</span></div></div>';
+}
 function taxBodyHTML() {
   const ys = taxYears();
   const t = computeTaxes(taxYearSel || defaultTaxYear());
@@ -1742,9 +1659,6 @@ document.addEventListener('click', (e) => {
 
   const delBtn = t.closest('[data-del]');
   if (delBtn) { if (armConfirm(delBtn, 'Tap again to delete')) deleteItem(delBtn.dataset.del); return; }
-
-  const bar = t.closest('[data-mi]');
-  if (bar) { selectChartBar(Number(bar.dataset.mi)); return; }
 
   const cyc = t.closest('[data-cycle]');
   if (cyc) {
