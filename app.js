@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.6.1';
+const APP_VERSION = '1.7.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -153,14 +153,25 @@ function normItem(r) {
     stats: r.stats && typeof r.stats === 'object'
       ? { clicks: num(r.stats.clicks), saves: num(r.stats.saves), updated: validYMD(r.stats.updated) }
       : null,
+    fixes: Array.isArray(r.fixes)
+      ? r.fixes.filter((f) => f && typeof f.c === 'number' && isFinite(f.c))
+          .map((f) => ({ c: Math.round(f.c * 100) / 100, note: String(f.note || '').slice(0, 80), d: validYMD(f.d) }))
+          .slice(0, 100)
+      : [],
   };
   if (!o.priceHistory.length && o.listPrice != null) o.priceHistory = [{ p: o.listPrice, d: o.buyDate }];
+  // legacy single "extra costs" number becomes the first itemized fix-up entry
+  if (o.extraCosts > 0 && !o.fixes.length) {
+    o.fixes = [{ c: o.extraCosts, note: 'Fix-up costs', d: o.buyDate }];
+    o.extraCosts = 0;
+  }
   return o;
 }
 const isSold = (it) => it.status === 'sold';
 const live = () => items.filter((i) => !i.deleted);
 const touch = (it) => { it.updatedAt = Date.now(); };
-const costOf = (it) => num(it.buyPrice) + num(it.extraCosts);           // what you have into it
+const fixesTotal = (it) => (it.fixes || []).reduce((a, f) => a + num(f.c), 0);
+const costOf = (it) => num(it.buyPrice) + num(it.extraCosts) + fixesTotal(it); // what you have into it
 const totalCostOf = (it) => costOf(it) + num(it.fees);                  // incl. selling fees
 const profitOf = (it) => num(it.sellPrice) - totalCostOf(it);           // only meaningful when sold
 function dimsLabel(it) {
@@ -1029,12 +1040,9 @@ function openItemSheet(id) {
     saleSec +
 
     '<details class="more"' + (it && (it.listPrice != null || it.extraCosts || it.notes || it.dimH != null || it.dimW != null || it.dimD != null) ? ' open' : '') + '><summary>More — list price, dimensions, notes</summary>' +
-    '<div class="frow" style="margin-top:6px">' +
-    '<div><label class="sec" style="margin-top:0">Asking / listed at</label>' +
+    '<div style="margin-top:6px"><label class="sec" style="margin-top:0">Asking / listed at</label>' +
     '<div class="money"><input class="in" name="listPrice" inputmode="decimal" placeholder="—" value="' + (it && it.listPrice != null ? it.listPrice : '') + '"></div></div>' +
-    '<div><label class="sec" style="margin-top:0">Extra costs</label>' +
-    '<div class="money"><input class="in" name="extraCosts" inputmode="decimal" placeholder="0" value="' + (it && it.extraCosts ? it.extraCosts : '') + '"></div></div>' +
-    '</div>' +
+    (it ? '' : '<div class="taxnote" style="margin-top:8px">Repairs &amp; upgrade costs get logged on the item after you add it — each one adds to your investment.</div>') +
     '<label class="sec">Dimensions <span style="opacity:.6;text-transform:none;letter-spacing:0">(inches)</span></label>' +
     '<div class="frow" style="grid-template-columns:1fr 1fr 1fr">' +
     '<input class="in" name="dimH" inputmode="decimal" placeholder="Height" value="' + (it && it.dimH != null ? it.dimH : '') + '">' +
@@ -1097,6 +1105,30 @@ function updateProfitPreview() {
 }
 
 /* -------- detail sheet -------- */
+function fixesSectionHTML(it) {
+  const sold = isSold(it);
+  const fixes = it.fixes || [];
+  if (sold && !fixes.length && !num(it.extraCosts)) return '';
+  let h = '<label class="sec" style="margin-top:14px">Repairs &amp; upgrades</label>';
+  if (fixes.length) {
+    h += fixes.map((f, i) =>
+      '<div class="trow"><div class="n">' + esc(f.note || 'Fix-up') +
+      (f.d ? '<small>' + fmtShort(f.d) + '</small>' : '') + '</div>' +
+      '<span class="tv">' + money(f.c) + '</span>' +
+      (!sold ? '<button class="btn btn-mini btn-ghost" data-delfix="' + it.id + '" data-fixidx="' + i + '" style="color:var(--faint);padding:5px 9px" aria-label="Remove">✕</button>' : '') +
+      '</div>').join('');
+    h += '<div class="taxnote" style="margin-top:6px">Fix-up total ' + money(num(it.extraCosts) + fixesTotal(it)) +
+      ' — rolled into what you have into this item (' + money(costOf(it)) + ').</div>';
+  }
+  if (!sold) {
+    h += '<div style="display:flex;gap:8px;margin-top:9px">' +
+      '<input class="in" id="fix-note" placeholder="New drawer pulls" maxlength="80" style="flex:1.4;min-width:0">' +
+      '<div class="money" style="flex:1;min-width:86px"><input class="in" id="fix-cost" inputmode="decimal" placeholder="0"></div>' +
+      '<button class="btn" data-addfix="' + it.id + '" style="flex:none">Add</button></div>';
+    if (!fixes.length) h += '<div class="taxnote" style="margin-top:6px">Parts, paint, hardware, cleaning — each one adds to your investment in this item.</div>';
+  }
+  return h;
+}
 function listingSectionHTML(it) {
   const sold = isSold(it);
   const ph = it.priceHistory || [];
@@ -1151,7 +1183,8 @@ function detailBodyHTML(it) {
 
   let kv = '';
   const cell = (k, v) => '<div class="cell"><span>' + k + '</span><b>' + v + '</b></div>';
-  kv += cell('Paid', money(it.buyPrice) + (it.extraCosts ? ' <small style="color:var(--faint)">+' + money(it.extraCosts) + ' extra</small>' : ''));
+  const fixTot = num(it.extraCosts) + fixesTotal(it);
+  kv += cell('Paid', money(it.buyPrice) + (fixTot ? ' <small style="color:var(--faint)">+' + money(fixTot) + ' fix-up</small>' : ''));
   kv += cell('Bought', fmtShort(it.buyDate));
   if (sold) {
     kv += cell('Sold for', money(it.sellPrice));
@@ -1174,6 +1207,7 @@ function detailBodyHTML(it) {
     (sold ? '<div class="dprofit ' + (p >= 0 ? 'pos' : 'neg') + '">' + money(p, true) +
       '<small>' + (roi != null ? Math.round(roi) + '% ROI' : '') + '</small></div>' : '') +
     '<div class="kv">' + kv + '</div>' +
+    fixesSectionHTML(it) +
     listingSectionHTML(it) +
     (it.notes ? '<div class="dnotes">' + esc(it.notes) + '</div>' : '') +
     '<div class="btnrow">' +
@@ -1182,6 +1216,34 @@ function detailBodyHTML(it) {
       : '<button class="btn" data-edit="' + it.id + '">Edit</button><button class="btn btn-primary" data-sold="' + it.id + '">Mark sold</button>') +
     '<button class="btn btn-danger full" data-del="' + it.id + '">Delete this flip</button>' +
     '</div>';
+}
+
+/* -------- repairs & upgrades -------- */
+async function addFix(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it || isSold(it)) return;
+  const nEl = $('#fix-note'), cEl = $('#fix-cost');
+  const c = parseMoney(cEl && cEl.value);
+  if (c == null) { toast('Enter what it cost', 'warn'); if (cEl) { cEl.classList.add('err'); cEl.focus(); } return; }
+  it.fixes = it.fixes || [];
+  it.fixes.push({ c, note: String((nEl && nEl.value) || '').trim().slice(0, 80), d: todayYMD() });
+  touch(it);
+  await store.save(it);
+  scheduleSync();
+  toast('Added — ' + money(costOf(it)) + ' now into this item', 'good');
+  renderPending = true;
+  refreshDetail(id);
+}
+async function removeFix(id, idx) {
+  const it = items.find((x) => x.id === id);
+  if (!it || !it.fixes || !it.fixes[idx]) return;
+  it.fixes.splice(idx, 1);
+  touch(it);
+  await store.save(it);
+  scheduleSync();
+  toast('Removed');
+  renderPending = true;
+  refreshDetail(id);
 }
 
 /* -------- listing tracking (price drops + FB stats snapshots) -------- */
@@ -1340,7 +1402,6 @@ async function saveItemForm(f) {
       base.priceHistory.push({ p: base.listPrice, d: todayYMD() });
     }
   }
-  base.extraCosts = parseMoney(fd.get('extraCosts')) || 0;
   base.notes = String(fd.get('notes') || '').trim().slice(0, 4000);
   base.dimH = parseMoney(fd.get('dimH'));
   base.dimW = parseMoney(fd.get('dimW'));
@@ -1470,14 +1531,14 @@ function exportJSON() {
   toast('Backup exported', 'good');
 }
 function exportCSV() {
-  const cols = ['Name', 'Owner', 'Category', 'Source', 'Status', 'Buy Price', 'Buy Date', 'Extra Costs', 'List Price',
+  const cols = ['Name', 'Owner', 'Category', 'Source', 'Status', 'Buy Price', 'Buy Date', 'Fix-up Costs', 'List Price',
     'Sell Price', 'Sell Date', 'Sold Via', 'Fees', 'Profit', 'ROI %', 'Days Held', 'Height (in)', 'Width (in)', 'Depth (in)', 'Notes'];
   const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
   const rows = live().map((it) => {
     const sold = isSold(it);
     return [
       it.name, it.owner, catLabel(it.category), srcLabel(it.source), it.status,
-      it.buyPrice, it.buyDate, it.extraCosts || '', it.listPrice != null ? it.listPrice : '',
+      it.buyPrice, it.buyDate, (num(it.extraCosts) + fixesTotal(it)) || '', it.listPrice != null ? it.listPrice : '',
       sold && it.sellPrice != null ? it.sellPrice : '', sold ? (it.sellDate || '') : '',
       sold ? viaLabel(it.soldVia) : '', sold ? (it.fees || '') : '',
       sold ? profitOf(it).toFixed(2) : '', sold && roiOf(it) != null ? Math.round(roiOf(it)) : '',
@@ -1545,6 +1606,7 @@ function buildSample() {
       it.priceHistory = [{ p: 110, d: daysAgoYMD(18) }, { p: 95, d: daysAgoYMD(10) }, { p: 85, d: daysAgoYMD(4) }];
       it.stats = { clicks: 63, saves: 9, updated: daysAgoYMD(1) };
       it.dimH = 72; it.dimW = 31; it.dimD = 12;
+      it.fixes = [{ c: 9, note: 'Wood glue + clamps', d: daysAgoYMD(16) }, { c: 14, note: 'New shelf pins', d: daysAgoYMD(12) }];
     } else if (it.listPrice != null && !(it.priceHistory || []).length) {
       it.priceHistory = [{ p: it.listPrice, d: it.buyDate }];
     }
@@ -1626,6 +1688,11 @@ document.addEventListener('click', (e) => {
       return;
     }
   }
+
+  const af = t.closest('[data-addfix]');
+  if (af) { addFix(af.dataset.addfix); return; }
+  const dfx = t.closest('[data-delfix]');
+  if (dfx) { removeFix(dfx.dataset.delfix, Number(dfx.dataset.fixidx)); return; }
 
   const dp = t.closest('[data-droppr]');
   if (dp) { logPriceDrop(dp.dataset.droppr); return; }
