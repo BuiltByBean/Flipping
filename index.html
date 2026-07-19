@@ -215,6 +215,7 @@ body.locked #view{overflow:hidden}
   transition:transform .13s}
 .fabwrap:active .fab{transform:translateX(-50%) scale(.92)}
 .fab svg{width:26px;height:26px}
+.fab-label{display:none}
 
 /* ---------- sheets ---------- */
 #sheet-root{display:contents} /* pass-through: .sheet-wrap anchors to BODY */
@@ -364,6 +365,61 @@ details.more[open] summary::after{transform:rotate(180deg)}
 .taxnote b{color:var(--sub)}
 
 .hidden{display:none!important}
+
+/* ---------- desktop web layout (≥1000px) ----------
+   Same DOM, different shell: the bottom tab bar becomes a left sidebar,
+   content lays out on a 12-col grid, lists go two-up, and bottom sheets
+   become centered modals. Phone layout is untouched. */
+@media(min-width:1000px){
+  body{flex-direction:row}
+
+  #tabbar{
+    order:-1;display:flex;flex-direction:column;align-items:stretch;gap:5px;
+    width:238px;flex:none;height:auto;
+    padding:20px 14px;border-top:0;border-right:1px solid rgba(255,255,255,.07);
+    background:rgba(12,19,16,.55);
+  }
+  .tab{flex-direction:row;justify-content:flex-start;gap:12px;padding:11px 13px;border-radius:12px;color:var(--sub)}
+  .tab span{font-size:14px;font-weight:650}
+  .tab svg{width:20px;height:20px}
+  .tab:hover{background:rgba(255,255,255,.05)}
+  .tab.on{background:rgba(52,211,153,.1);color:var(--em)}
+  .fabwrap{order:-1;position:static;margin:0 0 14px;padding:0}
+  .fab{position:static;transform:none;width:100%;height:46px;border-radius:13px;gap:9px;
+    font-size:14.5px;font-weight:750}
+  .fabwrap:active .fab{transform:scale(.97)}
+  .fab svg{width:20px;height:20px}
+  .fab-label{display:inline}
+
+  #view{
+    display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px 16px;
+    align-content:start;align-items:start;
+    padding:36px max(40px,calc((100% - 1160px)/2)) 64px;
+  }
+  #view > *{grid-column:1/-1;max-width:none;margin-left:0;margin-right:0}
+  #view > .card{grid-column:span 6;margin-bottom:0}
+  #view > .card.hero{grid-column:1/-1}
+  .stats{margin-bottom:0}
+  .toolbar{max-width:560px}
+
+  .list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+  .list .mgroup{grid-column:1/-1}
+  .list .empty{grid-column:1/-1}
+  .item:hover{border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.035))}
+
+  #view::-webkit-scrollbar{width:10px}
+  #view::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px;border:3px solid var(--bg)}
+  #view::-webkit-scrollbar-track{background:transparent}
+
+  .sheet{
+    left:50%;right:auto;bottom:auto;top:50%;width:540px;max-width:94vw;
+    max-height:min(86vh,780px);border-radius:22px;border-bottom:1px solid var(--line2);
+    transform:translate(-50%,-46%) scale(.97);opacity:0;
+    transition:transform .22s cubic-bezier(.2,.75,.25,1),opacity .18s;
+  }
+  .sheet-wrap.open .sheet{transform:translate(-50%,-50%) scale(1);opacity:1}
+  .grab{display:none}
+}
 </style>
 </head>
 <body>
@@ -378,7 +434,7 @@ details.more[open] summary::after{transform:rotate(180deg)}
    numbers fall only a hair short of it. Re-measures on rotate/resize. */
 (function () {
   var probe = document.getElementById('vv-probe');
-  var lastKb = 0;
+  var lastKb = 0, lastH = 0;
   // One-shot, idempotent reveal: scroll the sheet's own scroller by exactly
   // the overlap. Once the field is visible it does NOTHING — so it can never
   // feed back into scroll events and oscillate (the "jumps up and down" bug).
@@ -412,15 +468,18 @@ details.more[open] summary::after{transform:rotate(180deg)}
     } else {
       h = vv || ih || pr;
     }
-    if (h && h > 250) document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
+    if (h && h > 250) {
+      lastH = Math.round(h);
+      document.documentElement.style.setProperty('--vvh', lastH + 'px');
+    }
 
-    // Keyboard overlap: layout probe height minus visual height. Only applied
-    // when it actually CHANGES (keyboard open/close/resize) — never per
-    // scroll frame, and pans don't move the sheet. Sheets sit at
-    // bottom:var(--kb) so they ride the keyboard's top edge.
+    // Keyboard overlap = how much of OUR shell the visual viewport lost.
+    // Floor of 140px: real keyboards are 216px+, while resting viewport
+    // mismatches (iOS chrome-slice lies) stay under ~100px — so at rest this
+    // is always 0 and sheets sit flush. Updates only on real size changes.
     var kb = 0;
-    if (vvp && pr) kb = Math.max(0, Math.round(pr - vv));
-    if (kb < 24) kb = 0; // sub-keyboard noise
+    if (vvp && lastH) kb = Math.max(0, Math.round(lastH - vv));
+    if (kb < 140) kb = 0;
     if (kb !== lastKb) {
       lastKb = kb;
       document.documentElement.style.setProperty('--kb', kb + 'px');
@@ -462,7 +521,7 @@ details.more[open] summary::after{transform:rotate(180deg)}
     <span>Inventory</span>
   </button>
   <button class="fabwrap" data-action="add" aria-label="Add flip">
-    <span class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></span>
+    <span class="fab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><span class="fab-label">New flip</span></span>
   </button>
   <button class="tab" data-view="sold" aria-label="Sold">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="m8.4 12.3 2.5 2.5 4.9-5.2"/></svg>
