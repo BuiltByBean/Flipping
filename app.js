@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -123,7 +123,7 @@ const daysHeld = (it) => {
 /* ---------------- item model ---------------- */
 function normItem(r) {
   r = r || {};
-  return {
+  const o = {
     id: r.id ? String(r.id) : uid(),
     name: String(r.name || '').slice(0, 120),
     category: CATS.some((c) => c[0] === r.category) ? r.category : 'other',
@@ -144,7 +144,15 @@ function normItem(r) {
     updatedAt: typeof r.updatedAt === 'number' && r.updatedAt > 0 ? r.updatedAt : (r.createdAt || Date.now()),
     demo: !!r.demo,
     createdAt: r.createdAt || Date.now(),
+    priceHistory: Array.isArray(r.priceHistory)
+      ? r.priceHistory.filter((e) => e && typeof e.p === 'number' && isFinite(e.p) && validYMD(e.d)).slice(0, 60)
+      : [],
+    stats: r.stats && typeof r.stats === 'object'
+      ? { clicks: num(r.stats.clicks), saves: num(r.stats.saves), updated: validYMD(r.stats.updated) }
+      : null,
   };
+  if (!o.priceHistory.length && o.listPrice != null) o.priceHistory = [{ p: o.listPrice, d: o.buyDate }];
+  return o;
 }
 const isSold = (it) => it.status === 'sold';
 const live = () => items.filter((i) => !i.deleted);
@@ -667,7 +675,7 @@ function invItemHTML(it) {
     '<div class="meta">' + money(costOf(it)) + ' · ' + srcLabel(it.source) + ' · ' + fmtShort(it.buyDate) +
     (it.owner ? ' · ' + esc(it.owner) : '') + '</div>' +
     '<div class="badges">' +
-    (it.listPrice != null ? '<span class="badge amber">Listed ' + money(it.listPrice) + '</span>' : '') +
+    (it.listPrice != null ? '<span class="badge amber">' + ((it.priceHistory || []).length > 1 ? '↓ ' : '') + 'Listed ' + money(it.listPrice) + '</span>' : '') +
     '<span class="badge">' + held + 'd held</span>' +
     (it.demo ? '<span class="badge">sample</span>' : '') +
     '</div></div>' +
@@ -1072,9 +1080,54 @@ function updateProfitPreview() {
 }
 
 /* -------- detail sheet -------- */
+function listingSectionHTML(it) {
+  const sold = isSold(it);
+  const ph = it.priceHistory || [];
+  if (sold && ph.length < 2 && !it.stats) return '';
+  let h = '<label class="sec" style="margin-top:14px">Listing</label>';
+  if (ph.length) {
+    const journey = ph.map((e) => money(e.p)).join(' → ');
+    const drop = ph.length > 1 && ph[0].p > 0 ? Math.round((1 - ph[ph.length - 1].p / ph[0].p) * 100) : 0;
+    let soldLine = '';
+    if (sold && it.sellPrice != null && ph[0].p > 0) {
+      const pct = Math.round((1 - it.sellPrice / ph[0].p) * 100);
+      soldLine = '<br>Sold ' + money(it.sellPrice) + ' — ' +
+        (pct > 0 ? pct + '% under first ask' : pct < 0 ? Math.abs(pct) + '% over first ask 🔥' : 'right at ask');
+    }
+    h += '<div class="dnotes" style="margin-top:0">Asked ' + journey +
+      (drop > 0 ? ' <span style="color:var(--amber)">(−' + drop + '%)</span>' : '') + soldLine + '</div>';
+  } else if (!sold) {
+    h += '<div class="taxnote" style="margin-top:0">No asking price logged yet — set one below and every change gets dated.</div>';
+  }
+  if (it.stats) {
+    h += '<div class="badges" style="margin:9px 0 0"><span class="badge">' + num(it.stats.clicks) + ' clicks</span>' +
+      '<span class="badge">' + num(it.stats.saves) + ' saves</span>' +
+      '<span class="badge">as of ' + fmtShort(it.stats.updated || todayYMD()) + '</span></div>';
+  }
+  if (!sold) {
+    h += '<div style="display:flex;gap:8px;margin-top:11px">' +
+      '<div class="money" style="flex:1"><input class="in" id="drop-price" inputmode="decimal" placeholder="New asking price"></div>' +
+      '<button class="btn" data-droppr="' + it.id + '" style="flex:none">Log ask</button></div>';
+    h += '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<input class="in" id="st-clicks" inputmode="numeric" placeholder="Clicks" value="' + (it.stats ? num(it.stats.clicks) : '') + '" style="flex:1;min-width:0">' +
+      '<input class="in" id="st-saves" inputmode="numeric" placeholder="Saves" value="' + (it.stats ? num(it.stats.saves) : '') + '" style="flex:1;min-width:0">' +
+      '<button class="btn" data-savestats="' + it.id + '" style="flex:none">Save</button></div>' +
+      '<div class="taxnote" style="margin-top:6px">Copy clicks &amp; saves off your FB listing’s insights — 5 seconds, and the history lives here.</div>';
+  }
+  return h;
+}
 function openDetailSheet(id) {
   const it = items.find((x) => x.id === id);
   if (!it) return;
+  openSheet(sheetHead(isSold(it) ? 'Sold flip' : 'In inventory') +
+    '<div class="sheet-body" id="detail-body">' + detailBodyHTML(it) + '</div>');
+}
+function refreshDetail(id) {
+  const b = $('#detail-body');
+  const it = items.find((x) => x.id === id);
+  if (b && it) b.innerHTML = detailBodyHTML(it);
+}
+function detailBodyHTML(it) {
   const sold = isSold(it);
   const p = profitOf(it);
   const roi = roiOf(it);
@@ -1097,24 +1150,52 @@ function openDetailSheet(id) {
   kv += cell('Category', catEmoji(it.category) + ' ' + esc(catLabel(it.category)));
   if (it.owner) kv += cell('Owner', esc(it.owner));
 
-  openSheet(
-    sheetHead(sold ? 'Sold flip' : 'In inventory') +
-    '<div class="sheet-body">' +
-    (it.photo ? '<img class="dphoto" src="' + it.photo + '" alt="">' : '') +
+  return (it.photo ? '<img class="dphoto" src="' + it.photo + '" alt="">' : '') +
     '<div class="dhead"><h3>' + esc(it.name) + '</h3>' +
     '<span class="pstat ' + (sold ? 'sold' : 'inv') + '">' + (sold ? 'SOLD' : 'HOLDING') + '</span></div>' +
     (sold ? '<div class="dprofit ' + (p >= 0 ? 'pos' : 'neg') + '">' + money(p, true) +
       '<small>' + (roi != null ? Math.round(roi) + '% ROI' : '') + '</small></div>' : '') +
     '<div class="kv">' + kv + '</div>' +
+    listingSectionHTML(it) +
     (it.notes ? '<div class="dnotes">' + esc(it.notes) + '</div>' : '') +
     '<div class="btnrow">' +
     (sold
       ? '<button class="btn" data-edit="' + it.id + '">Edit</button><button class="btn" data-revert="' + it.id + '">Back to inventory</button>'
       : '<button class="btn" data-edit="' + it.id + '">Edit</button><button class="btn btn-primary" data-sold="' + it.id + '">Mark sold</button>') +
     '<button class="btn btn-danger full" data-del="' + it.id + '">Delete this flip</button>' +
-    '</div>' +
-    '</div>'
-  );
+    '</div>';
+}
+
+/* -------- listing tracking (price drops + FB stats snapshots) -------- */
+async function logPriceDrop(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const inp = $('#drop-price');
+  const v = parseMoney(inp && inp.value);
+  if (v == null) { toast('Enter the new asking price', 'warn'); if (inp) { inp.classList.add('err'); inp.focus(); } return; }
+  it.listPrice = v;
+  it.priceHistory = it.priceHistory || [];
+  const last = it.priceHistory[it.priceHistory.length - 1];
+  if (!last || Math.abs(last.p - v) > 0.004) it.priceHistory.push({ p: v, d: todayYMD() });
+  touch(it);
+  await store.save(it);
+  scheduleSync();
+  toast('Now asking ' + money(v), 'good');
+  renderPending = true; // card badge updates when the sheet closes
+  refreshDetail(id);
+}
+async function saveListingStats(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  const c = parseMoney(($('#st-clicks') || {}).value);
+  const s = parseMoney(($('#st-saves') || {}).value);
+  if (c == null && s == null) { toast('Type the clicks / saves from your FB listing', 'warn'); return; }
+  it.stats = { clicks: c || 0, saves: s || 0, updated: todayYMD() };
+  touch(it);
+  await store.save(it);
+  scheduleSync();
+  toast('Listing stats saved', 'good');
+  refreshDetail(id);
 }
 
 /* -------- taxes sheet -------- */
@@ -1234,6 +1315,13 @@ async function saveItemForm(f) {
   base.source = String(fd.get('source') || 'other');
   base.category = String(fd.get('category') || 'other');
   base.listPrice = parseMoney(fd.get('listPrice'));
+  if (base.listPrice != null) {
+    base.priceHistory = base.priceHistory || [];
+    const lastAsk = base.priceHistory[base.priceHistory.length - 1];
+    if (!lastAsk || Math.abs(lastAsk.p - base.listPrice) > 0.004) {
+      base.priceHistory.push({ p: base.listPrice, d: todayYMD() });
+    }
+  }
   base.extraCosts = parseMoney(fd.get('extraCosts')) || 0;
   base.notes = String(fd.get('notes') || '').trim().slice(0, 4000);
   base.owner = String(fd.get('owner') || '').trim().slice(0, 40);
@@ -1432,6 +1520,12 @@ function buildSample() {
   ].map((it, i) => {
     it.listPrice = [null, null, null, null, null, null, null, null, null, null, null, null, 85, 90, 65, 80][i];
     it.owner = ['Mike', 'Sam', 'Mike', 'Mike', 'Sam', 'Sam', 'Mike', 'Sam', 'Mike', 'Sam', 'Sam', 'Mike', 'Mike', 'Sam', 'Mike', 'Sam'][i];
+    if (it.id === 'demo-13') { // show off price-drop + stats tracking
+      it.priceHistory = [{ p: 110, d: daysAgoYMD(18) }, { p: 95, d: daysAgoYMD(10) }, { p: 85, d: daysAgoYMD(4) }];
+      it.stats = { clicks: 63, saves: 9, updated: daysAgoYMD(1) };
+    } else if (it.listPrice != null && !(it.priceHistory || []).length) {
+      it.priceHistory = [{ p: it.listPrice, d: it.buyDate }];
+    }
     return it;
   });
 }
@@ -1510,6 +1604,11 @@ document.addEventListener('click', (e) => {
       return;
     }
   }
+
+  const dp = t.closest('[data-droppr]');
+  if (dp) { logPriceDrop(dp.dataset.droppr); return; }
+  const sst = t.closest('[data-savestats]');
+  if (sst) { saveListingStats(sst.dataset.savestats); return; }
 
   const ty = t.closest('[data-taxyear]');
   if (ty) { taxYearSel = ty.dataset.taxyear; refreshTaxes(); return; }
