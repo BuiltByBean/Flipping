@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -139,11 +139,16 @@ function normItem(r) {
     fees: num(r.fees),
     notes: String(r.notes || '').slice(0, 4000),
     photo: typeof r.photo === 'string' && r.photo.startsWith('data:image') ? r.photo : null,
+    owner: String(r.owner || '').trim().slice(0, 40),
+    deleted: !!r.deleted,
+    updatedAt: typeof r.updatedAt === 'number' && r.updatedAt > 0 ? r.updatedAt : (r.createdAt || Date.now()),
     demo: !!r.demo,
     createdAt: r.createdAt || Date.now(),
   };
 }
 const isSold = (it) => it.status === 'sold';
+const live = () => items.filter((i) => !i.deleted);
+const touch = (it) => { it.updatedAt = Date.now(); };
 const costOf = (it) => num(it.buyPrice) + num(it.extraCosts);           // what you have into it
 const totalCostOf = (it) => costOf(it) + num(it.fees);                  // incl. selling fees
 const profitOf = (it) => num(it.sellPrice) - totalCostOf(it);           // only meaningful when sold
@@ -220,6 +225,9 @@ const store = (() => {
 /* ---------------- state ---------------- */
 let items = [];
 let view = 'dashboard';
+let syncState = {};
+try { syncState = JSON.parse(localStorage.getItem('flips.sync') || '{}') || {}; } catch (e) { syncState = {}; }
+const saveSyncState = () => { try { localStorage.setItem('flips.sync', JSON.stringify(syncState)); } catch (e) {} };
 let invQuery = '', invSort = 0;      // 0 newest · 1 oldest · 2 highest cost
 let soldQuery = '', soldSort = 0;    // 0 recent · 1 top profit
 let deferredPrompt = null;
@@ -240,10 +248,62 @@ function toast(msg, kind) {
   setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 260); }, 2400);
 }
 
+/* ---------------- people / owners ---------------- */
+function ownersList() {
+  const freq = new Map();
+  live().forEach((i) => { if (i.owner) freq.set(i.owner, (freq.get(i.owner) || 0) + 1); });
+  (syncState.people || []).forEach((p) => { if (!freq.has(p)) freq.set(p, 0); });
+  const arr = Array.from(freq.keys()).sort((a, b) => freq.get(b) - freq.get(a));
+  const me = syncState.person;
+  if (me) {
+    const i = arr.indexOf(me);
+    if (i > 0) arr.splice(i, 1);
+    if (i !== 0) arr.unshift(me);
+  }
+  return arr;
+}
+function hueOf(name) {
+  let h = 0;
+  for (const c of String(name)) h = (h * 31 + c.charCodeAt(0)) % 360;
+  return h;
+}
+function avatarHTML(name) {
+  if (!name) return '<span class="avatar ghost">?</span>';
+  const h = hueOf(name);
+  const initials = name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+  return '<span class="avatar" style="background:linear-gradient(135deg,hsl(' + h + ' 72% 62%),hsl(' +
+    ((h + 42) % 360) + ' 72% 46%))">' + esc(initials) + '</span>';
+}
+function leaderboardRows() {
+  const alive = live();
+  const sold = alive.filter(isSold);
+  const names = new Set();
+  alive.forEach((i) => { if (i.owner) names.add(i.owner); });
+  if (!names.size) return [];
+  const rows = [];
+  names.forEach((n) => {
+    const s = sold.filter((i) => i.owner === n);
+    rows.push({
+      name: n,
+      profit: s.reduce((a, i) => a + profitOf(i), 0),
+      count: s.length,
+      holding: alive.filter((i) => !isSold(i) && i.owner === n).length,
+      best: s.length ? Math.max(...s.map(profitOf)) : null,
+    });
+  });
+  rows.sort((a, b) => b.profit - a.profit || b.count - a.count);
+  const unSold = sold.filter((i) => !i.owner);
+  const unHold = alive.filter((i) => !isSold(i) && !i.owner).length;
+  if (unSold.length || unHold) {
+    rows.push({ name: null, profit: unSold.reduce((a, i) => a + profitOf(i), 0), count: unSold.length, holding: unHold, best: null });
+  }
+  return rows;
+}
+
 /* ---------------- derived stats ---------------- */
 function computeStats() {
-  const sold = items.filter(isSold);
-  const inv = items.filter((i) => !isSold(i));
+  const sold = live().filter(isSold);
+  const inv = live().filter((i) => !isSold(i));
   const profit = sold.reduce((a, i) => a + profitOf(i), 0);
   const revenue = sold.reduce((a, i) => a + num(i.sellPrice), 0);
   const costSold = sold.reduce((a, i) => a + totalCostOf(i), 0);
@@ -293,7 +353,7 @@ function groupBy(soldItems, keyFn, labelFn) {
 let chartData = [];
 function chartSVG() {
   const keys = lastMonths(12);
-  const sold = items.filter(isSold);
+  const sold = live().filter(isSold);
   chartData = keys.map((k) => {
     let v = 0, n = 0;
     sold.forEach((i) => { if (monthKey(i.sellDate) === k) { v += profitOf(i); n++; } });
@@ -393,9 +453,9 @@ const MARK_SVG = '<svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org
 function renderDashboard() {
   const s = computeStats();
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  let h = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b><span class="date">' + dateStr + '</span></div>';
+  let h = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b>' + syncPillHTML() + '<span class="date">' + dateStr + '</span></div>';
 
-  if (!items.length) {
+  if (!live().length) {
     h += '<div class="card hero rise" style="text-align:center;padding:34px 20px">' +
       '<div class="big" style="font-size:46px">🏷️</div>' +
       '<h3 style="margin:10px 0 5px;font-size:20px;font-weight:800">Start flipping</h3>' +
@@ -426,7 +486,24 @@ function renderDashboard() {
     '<div id="mdetail">' + mdetailHTML(11) + '</div>' +
     '</div>';
 
-  h += '<div class="stats two rise" style="animation-delay:.14s">' +
+  const lb = leaderboardRows();
+  if (lb.length) {
+    const maxAbs = Math.max(...lb.map((r) => Math.abs(r.profit)), 1);
+    const medals = ['🥇', '🥈', '🥉'];
+    h += '<div class="card rise" style="animation-delay:.13s"><h2>Leaderboard <span class="hint">total flipped profit</span></h2>' +
+      lb.map((r, i) => {
+        const named = r.name != null;
+        const rank = named && i < 3 ? '<span class="lb-rank m">' + medals[i] + '</span>' : '<span class="lb-rank">' + (named ? (i + 1) : '–') + '</span>';
+        const w = Math.max(3, Math.round((Math.abs(r.profit) / maxAbs) * 100));
+        const sub = r.count + ' sold · ' + r.holding + ' holding' + (r.best != null && r.best > 0 ? ' · best ' + money(r.best, true) : '');
+        return '<div class="lb-row">' + rank + avatarHTML(r.name) +
+          '<div class="lb-mid"><b>' + (named ? esc(r.name) : 'Unclaimed') + '</b><small>' + sub + '</small>' +
+          '<div class="lb-track"><div class="hfill' + (r.profit < 0 ? ' neg' : '') + '" style="--w:' + w + '%"></div></div></div>' +
+          '<span class="lb-p ' + (r.profit >= 0 ? 'pos' : 'neg') + '">' + money(r.profit, true) + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  h += '<div class="stats two rise" style="animation-delay:.16s">' +
     '<div class="stat"><div class="k">Tied up in inventory</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' waiting</div></div>' +
     '<div class="stat"><div class="k">Best month</div><div class="v">' + (s.bestMonth ? money(s.bestMonth.v, true) : '—') + '</div><div class="d">' + (s.bestMonth ? monthLong(s.bestMonth.k) : 'sell something!') + '</div></div>' +
     '</div>';
@@ -490,6 +567,7 @@ function matchesQuery(it, q) {
   q = q.toLowerCase();
   return (it.name || '').toLowerCase().includes(q) ||
     (it.notes || '').toLowerCase().includes(q) ||
+    (it.owner || '').toLowerCase().includes(q) ||
     catLabel(it.category).toLowerCase().includes(q) ||
     srcLabel(it.source).toLowerCase().includes(q);
 }
@@ -500,7 +578,8 @@ function invItemHTML(it) {
   return '<article class="item card" data-open="' + it.id + '">' +
     '<div class="thumb">' + (it.photo ? '<img src="' + it.photo + '" alt="">' : '<span>' + catEmoji(it.category) + '</span>') + '</div>' +
     '<div class="mid"><h3>' + esc(it.name) + '</h3>' +
-    '<div class="meta">' + money(costOf(it)) + ' · ' + srcLabel(it.source) + ' · ' + fmtShort(it.buyDate) + '</div>' +
+    '<div class="meta">' + money(costOf(it)) + ' · ' + srcLabel(it.source) + ' · ' + fmtShort(it.buyDate) +
+    (it.owner ? ' · ' + esc(it.owner) : '') + '</div>' +
     '<div class="badges">' +
     (it.listPrice != null ? '<span class="badge amber">Listed ' + money(it.listPrice) + '</span>' : '') +
     '<span class="badge">' + held + 'd held</span>' +
@@ -512,7 +591,7 @@ function invItemHTML(it) {
 function renderInvList() {
   const box = $('#inv-list');
   if (!box) return;
-  let list = items.filter((i) => !isSold(i)).filter((i) => matchesQuery(i, invQuery));
+  let list = live().filter((i) => !isSold(i)).filter((i) => matchesQuery(i, invQuery));
   if (invSort === 0) list.sort((a, b) => (b.buyDate || '').localeCompare(a.buyDate || '') || b.createdAt - a.createdAt);
   else if (invSort === 1) list.sort((a, b) => (a.buyDate || '').localeCompare(b.buyDate || '') || a.createdAt - b.createdAt);
   else list.sort((a, b) => costOf(b) - costOf(a));
@@ -551,7 +630,8 @@ function soldItemHTML(it) {
   return '<article class="item card" data-open="' + it.id + '">' +
     '<div class="thumb">' + (it.photo ? '<img src="' + it.photo + '" alt="">' : '<span>' + catEmoji(it.category) + '</span>') + '</div>' +
     '<div class="mid"><h3>' + esc(it.name) + '</h3>' +
-    '<div class="meta">' + money(totalCostOf(it)) + ' → ' + money(it.sellPrice) + ' · ' + viaLabel(it.soldVia) + '</div>' +
+    '<div class="meta">' + money(totalCostOf(it)) + ' → ' + money(it.sellPrice) + ' · ' + viaLabel(it.soldVia) +
+    (it.owner ? ' · ' + esc(it.owner) : '') + '</div>' +
     '<div class="badges"><span class="badge">' + fmtShort(it.sellDate) + '</span>' +
     (d != null ? '<span class="badge">' + d + 'd flip</span>' : '') +
     (it.demo ? '<span class="badge">sample</span>' : '') +
@@ -563,7 +643,7 @@ function soldItemHTML(it) {
 function renderSoldList() {
   const box = $('#sold-list');
   if (!box) return;
-  let list = items.filter(isSold).filter((i) => matchesQuery(i, soldQuery));
+  let list = live().filter(isSold).filter((i) => matchesQuery(i, soldQuery));
   const total = list.reduce((a, i) => a + profitOf(i), 0);
   const sum = $('#sold-sum');
   if (sum) sum.textContent = list.length + ' sold · ' + money(total, true) + ' total profit';
@@ -625,9 +705,19 @@ function renderSettings() {
   }
 
   $('#view').innerHTML =
-    '<div class="lt rise"><h1>Settings</h1><div class="sub">Your data lives on this device only</div></div>' +
+    '<div class="lt rise"><h1>Settings</h1><div class="sub">Synced to your private server — offline-safe</div></div>' +
 
-    '<div class="card rise"><h2>Backup &amp; export</h2>' +
+    '<div class="card rise"><h2>Sync &amp; people <span class="hint" id="sync-status-line">' + syncDetailLine() + '</span></h2>' +
+    '<div class="srow" style="border-bottom:0;padding-bottom:6px"><div class="ic">🔑</div><div class="tx"><b>Sync key</b><small>Type the same key on every device that should share data</small></div></div>' +
+    '<div style="display:flex;gap:8px;margin:0 0 6px">' +
+    '<input class="in" id="sync-key" type="text" placeholder="flips-…" value="' + esc(syncState.key || '') + '" autocapitalize="off" autocomplete="off" spellcheck="false" style="flex:1">' +
+    '<button class="btn" data-action="save-key" style="flex:none">Save</button></div>' +
+    '<div class="srow" style="padding-bottom:8px"><div class="ic">🙋</div><div class="tx"><b>This device is</b><small>New flips default to this person</small></div></div>' +
+    peopleChipsHTML('person', syncState.person || '') +
+    '<div style="margin-top:14px"><button class="btn" data-action="sync-now" style="width:100%">Sync now</button></div>' +
+    '</div>' +
+
+    '<div class="card rise" style="animation-delay:.03s"><h2>Backup &amp; export</h2>' +
     '<div class="srow"><div class="ic">💾</div><div class="tx"><b>Export backup</b><small>Full JSON — photos included</small></div><button class="btn btn-mini" data-action="export-json">Export</button></div>' +
     '<div class="srow"><div class="ic">📥</div><div class="tx"><b>Import backup</b><small>Restore or merge a JSON backup</small></div><button class="btn btn-mini" data-action="import">Import</button></div>' +
     '<div class="srow"><div class="ic">📊</div><div class="tx"><b>Export CSV</b><small>Open in Excel / Google Sheets</small></div><button class="btn btn-mini" data-action="export-csv">Export</button></div>' +
@@ -636,7 +726,7 @@ function renderSettings() {
 
     '<div class="card rise" style="animation-delay:.05s"><h2>App</h2>' +
     installRow +
-    '<div class="srow"><div class="ic">🗄️</div><div class="tx"><b>Storage</b><small id="storage-est">' + items.length + ' items · ' + store.mode + '</small></div></div>' +
+    '<div class="srow"><div class="ic">🗄️</div><div class="tx"><b>Storage</b><small id="storage-est">' + live().length + ' items · ' + store.mode + '</small></div></div>' +
     '<div class="srow"><div class="ic">🔄</div><div class="tx"><b>Check for updates</b><small>Version ' + APP_VERSION + '</small></div><button class="btn btn-mini" data-action="update">Check</button></div>' +
     '</div>' +
 
@@ -650,14 +740,14 @@ function renderSettings() {
     '<div class="srow"><div class="ic">⚠️</div><div class="tx"><b>Delete everything</b><small>Wipes all items on this device</small></div><button class="btn btn-mini btn-danger" data-action="wipe">Delete</button></div>' +
     '</div>' +
 
-    '<div class="foot">Flips v' + APP_VERSION + ' · built by <b>Bean</b><br>No accounts. No cloud. Your numbers stay yours.</div>';
+    '<div class="foot">Flips v' + APP_VERSION + ' · built by <b>Bean</b><br>Offline-first · syncs to your own Railway Postgres.</div>';
 
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
       const el = $('#storage-est');
       if (el && e && e.usage != null) {
         const mb = e.usage / 1048576;
-        el.textContent = items.length + ' items · ' + (mb < 0.1 ? '<0.1' : mb.toFixed(1)) + ' MB · ' + store.mode;
+        el.textContent = live().length + ' items · ' + (mb < 0.1 ? '<0.1' : mb.toFixed(1)) + ' MB · ' + store.mode;
       }
     }).catch(() => {});
   }
@@ -679,7 +769,10 @@ function closeSheet() {
   if (!w) return;
   w.classList.remove('open');
   document.body.classList.remove('locked');
-  setTimeout(() => { $('#sheet-root').innerHTML = ''; }, 300);
+  setTimeout(() => {
+    $('#sheet-root').innerHTML = '';
+    if (renderPending) { renderPending = false; render(); }
+  }, 300);
 }
 function sheetHead(title) {
   return '<div class="sheet-head"><h2>' + esc(title) + '</h2><button class="x" data-close-sheet aria-label="Close">✕</button></div>';
@@ -689,6 +782,61 @@ function chipsHTML(name, options, selected) {
     '<input type="hidden" name="' + name + '" value="' + esc(selected || '') + '">' +
     options.map((o) => '<button type="button" class="chip' + (o[0] === selected ? ' sel' : '') + '" data-val="' + o[0] + '">' + esc(o[1]) + '</button>').join('') +
     '</div>';
+}
+/* owner/person chips: derived people list + inline "new person" input */
+function peopleChipsHTML(kind, selected) {
+  const people = ownersList();
+  if (selected && !people.includes(selected)) people.unshift(selected);
+  const noneLabel = kind === 'person' ? 'Not set' : 'Unassigned';
+  return '<div class="chips" data-chips="' + kind + '">' +
+    '<input type="hidden" name="' + kind + '" value="' + esc(selected || '') + '">' +
+    '<button type="button" class="chip' + (!selected ? ' sel' : '') + '" data-val="">' + noneLabel + '</button>' +
+    people.map((p) => '<button type="button" class="chip' + (p === selected ? ' sel' : '') + '" data-val="' + esc(p) + '">' + esc(p) + '</button>').join('') +
+    '<button type="button" class="chip" data-val="__new">+ New person</button>' +
+    '</div>';
+}
+function commitNewPerson(group, name) {
+  if (!group || !group.isConnected) return;
+  name = String(name || '').trim().slice(0, 40);
+  const kind = group.dataset.chips;
+  const prev = ($('input[type=hidden]', group) || {}).value || '';
+  const sel = name || prev;
+  if (name) {
+    const ppl = syncState.people || [];
+    if (!ppl.includes(name)) { ppl.push(name); syncState.people = ppl; }
+    if (kind === 'person') syncState.person = name;
+    saveSyncState();
+  }
+  const holder = document.createElement('div');
+  holder.innerHTML = peopleChipsHTML(kind, sel);
+  group.replaceWith(holder.firstChild);
+}
+function syncPillHTML() {
+  const m = syncPillText();
+  return '<button type="button" class="sync-pill ' + m.cls + '" data-action="sync-now" title="Sync">' +
+    '<span class="dot"></span><span>' + m.word + '</span></button>';
+}
+function syncPillText() {
+  const map = {
+    ok: { word: 'Synced', cls: 'ok' },
+    syncing: { word: 'Syncing', cls: 'syncing' },
+    offline: { word: 'Offline', cls: '' },
+    err: { word: 'Sync error', cls: 'err' },
+    locked: { word: 'Key needed', cls: 'err' },
+    local: { word: 'Local only', cls: '' },
+    idle: { word: 'Sync', cls: '' },
+  };
+  return map[syncStatus] || map.idle;
+}
+function updateSyncPills() {
+  const m = syncPillText();
+  $$('.sync-pill').forEach((p) => {
+    p.className = 'sync-pill ' + m.cls;
+    const w = p.querySelector('span:last-child');
+    if (w) w.textContent = m.word;
+  });
+  const line = $('#sync-status-line');
+  if (line) line.textContent = syncDetailLine();
 }
 
 /* -------- add / edit sheet -------- */
@@ -734,6 +882,7 @@ function openItemSheet(id) {
 
     '<label class="sec">Where you found it</label>' + chipsHTML('source', SOURCES, it ? it.source : 'facebook') +
     '<label class="sec">Category</label>' + chipsHTML('category', CATS.map((c) => [c[0], c[2] + ' ' + c[1]]), it ? it.category : 'other') +
+    '<label class="sec">Whose flip is this?</label>' + peopleChipsHTML('owner', it ? it.owner : (syncState.person || '')) +
 
     saleSec +
 
@@ -823,6 +972,7 @@ function openDetailSheet(id) {
   }
   kv += cell('Source', esc(srcLabel(it.source)));
   kv += cell('Category', catEmoji(it.category) + ' ' + esc(catLabel(it.category)));
+  if (it.owner) kv += cell('Owner', esc(it.owner));
 
   openSheet(
     sheetHead(sold ? 'Sold flip' : 'In inventory') +
@@ -892,6 +1042,7 @@ async function saveItemForm(f) {
   base.listPrice = parseMoney(fd.get('listPrice'));
   base.extraCosts = parseMoney(fd.get('extraCosts')) || 0;
   base.notes = String(fd.get('notes') || '').trim().slice(0, 4000);
+  base.owner = String(fd.get('owner') || '').trim().slice(0, 40);
   if (pendingPhoto !== undefined) base.photo = pendingPhoto;
   if (it && isSold(it)) {
     const sp = parseMoney(fd.get('sellPrice'));
@@ -901,12 +1052,14 @@ async function saveItemForm(f) {
     const fe = parseMoney(fd.get('fees'));
     if (fe != null) base.fees = fe;
   }
+  touch(base);
   if (!it) items.unshift(base);
   await store.save(base);
   closeSheet();
   toast(it ? 'Saved' : 'Added to inventory', 'good');
   render();
   askPersist();
+  scheduleSync();
 }
 
 async function saveSoldForm(f) {
@@ -920,22 +1073,33 @@ async function saveSoldForm(f) {
   it.sellDate = validYMD(fd.get('sellDate')) || todayYMD();
   it.soldVia = String(fd.get('soldVia') || 'other');
   it.fees = parseMoney(fd.get('fees')) || 0;
+  touch(it);
   await store.save(it);
   closeSheet();
   const p = profitOf(it);
   toast('Sold for ' + money(sp) + ' — ' + money(p, true) + ' profit' + (p > 0 ? ' 🎉' : ''), p >= 0 ? 'good' : 'warn');
   setView('sold');
   askPersist();
+  scheduleSync();
 }
 
 async function deleteItem(id) {
-  const idx = items.findIndex((x) => x.id === id);
-  if (idx === -1) return;
-  items.splice(idx, 1);
-  await store.remove(id);
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  if (it.demo) {
+    // demo items never sync — hard delete
+    items = items.filter((x) => x.id !== id);
+    await store.remove(id);
+  } else {
+    // tombstone so other devices remove it too
+    it.deleted = true;
+    touch(it);
+    await store.save(it);
+  }
   closeSheet();
   toast('Deleted');
   render();
+  scheduleSync();
 }
 
 async function revertItem(id) {
@@ -946,10 +1110,12 @@ async function revertItem(id) {
   it.sellDate = null;
   it.soldVia = null;
   it.fees = 0;
+  touch(it);
   await store.save(it);
   closeSheet();
   toast('Moved back to inventory');
   setView('inventory');
+  scheduleSync();
 }
 
 /* two-tap confirm for destructive buttons */
@@ -1001,13 +1167,13 @@ function exportJSON() {
   toast('Backup exported', 'good');
 }
 function exportCSV() {
-  const cols = ['Name', 'Category', 'Source', 'Status', 'Buy Price', 'Buy Date', 'Extra Costs', 'List Price',
+  const cols = ['Name', 'Owner', 'Category', 'Source', 'Status', 'Buy Price', 'Buy Date', 'Extra Costs', 'List Price',
     'Sell Price', 'Sell Date', 'Sold Via', 'Fees', 'Profit', 'ROI %', 'Days Held', 'Notes'];
   const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
-  const rows = items.map((it) => {
+  const rows = live().map((it) => {
     const sold = isSold(it);
     return [
-      it.name, catLabel(it.category), srcLabel(it.source), it.status,
+      it.name, it.owner, catLabel(it.category), srcLabel(it.source), it.status,
       it.buyPrice, it.buyDate, it.extraCosts || '', it.listPrice != null ? it.listPrice : '',
       sold && it.sellPrice != null ? it.sellPrice : '', sold ? (it.sellDate || '') : '',
       sold ? viaLabel(it.soldVia) : '', sold ? (it.fees || '') : '',
@@ -1035,6 +1201,7 @@ async function doImport(file) {
   await store.replaceAll(items);
   toast('Imported — ' + added + ' new, ' + updated + ' updated', 'good');
   render();
+  scheduleSync();
 }
 
 /* ---------------- sample data ---------------- */
@@ -1068,7 +1235,11 @@ function buildSample() {
     S(14, 'Xbox controllers x4', 'electronics', 'garage', 40, 15, null, null, null, 0, 0),
     S(15, 'Craftsman rolling toolbox', 'tools', 'garage', 20, 9, null, null, null, 0, 0),
     S(16, 'Antique wall mirror', 'home', 'estate', 25, 6, null, null, null, 0, 0),
-  ].map((it, i) => { it.listPrice = [null, null, null, null, null, null, null, null, null, null, null, null, 85, 90, 65, 80][i]; return it; });
+  ].map((it, i) => {
+    it.listPrice = [null, null, null, null, null, null, null, null, null, null, null, null, 85, 90, 65, 80][i];
+    it.owner = ['Mike', 'Sam', 'Mike', 'Mike', 'Sam', 'Sam', 'Mike', 'Sam', 'Mike', 'Sam', 'Sam', 'Mike', 'Mike', 'Sam', 'Mike', 'Sam'][i];
+    return it;
+  });
 }
 async function loadSample() {
   const sample = buildSample();
@@ -1117,10 +1288,26 @@ document.addEventListener('click', (e) => {
   if (chip) {
     const group = chip.closest('[data-chips]');
     if (group) {
+      if (chip.dataset.val === '__new') {
+        const inp = document.createElement('input');
+        inp.className = 'chip-in';
+        inp.type = 'text';
+        inp.placeholder = 'Name';
+        inp.autocapitalize = 'words';
+        inp.setAttribute('autocomplete', 'off');
+        chip.replaceWith(inp);
+        try { inp.focus(); } catch (err) {}
+        return;
+      }
       $$('.chip', group).forEach((c) => c.classList.remove('sel'));
       chip.classList.add('sel');
       const hidden = $('input[type=hidden]', group);
       if (hidden) hidden.value = chip.dataset.val;
+      if (group.dataset.chips === 'person') {
+        syncState.person = chip.dataset.val;
+        saveSyncState();
+        toast(chip.dataset.val ? 'New flips default to ' + chip.dataset.val : 'Default owner cleared', 'good');
+      }
       if (chip.closest('#f-sold')) updateProfitPreview();
       return;
     }
@@ -1167,7 +1354,29 @@ document.addEventListener('click', (e) => {
   else if (a === 'import') { const i = $('#import-in'); if (i) i.click(); }
   else if (a === 'sample') loadSample();
   else if (a === 'sample-remove') removeSample();
-  else if (a === 'wipe') { if (armConfirm(act, 'Tap again — deletes ALL')) { items = []; store.replaceAll([]); toast('Everything deleted'); render(); } }
+  else if (a === 'wipe') {
+    if (armConfirm(act, 'Tap again — deletes ALL')) {
+      const now = Date.now();
+      items = items.filter((i) => !i.demo);
+      items.forEach((i) => { i.deleted = true; i.updatedAt = now; });
+      store.replaceAll(items);
+      toast('Everything deleted');
+      render();
+      scheduleSync();
+    }
+  }
+  else if (a === 'save-key') {
+    const inp = $('#sync-key');
+    syncState.key = inp ? inp.value.trim() : '';
+    saveSyncState();
+    serverAbsent = false;
+    toast(syncState.key ? 'Key saved — syncing…' : 'Key cleared', 'good');
+    sync('key');
+  }
+  else if (a === 'sync-now') {
+    if (syncStatus === 'locked' && view !== 'settings') { setView('settings'); toast('Enter your sync key first', 'warn'); }
+    else { serverAbsent = false; sync('manual'); }
+  }
   else if (a === 'install') {
     if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.finally(() => { deferredPrompt = null; render(); }); }
   }
@@ -1213,6 +1422,89 @@ window.addEventListener('beforeinstallprompt', (e) => {
 });
 window.addEventListener('appinstalled', () => toast('Installed — check your home screen', 'good'));
 
+/* ---------------- sync engine ----------------
+   Offline-first: every mutation stamps updatedAt and the app keeps working
+   from IndexedDB. sync() pushes local changes and pulls everyone else's in
+   one POST. Conflicts resolve last-write-wins on updatedAt; the pull
+   watermark (`since`) uses SERVER time so device clock skew can't hide rows.
+   Demo/sample items never leave the device. */
+let syncing = false, syncQueued = false, syncTimer = null, renderPending = false, serverAbsent = false;
+let syncStatus = 'idle';
+
+function syncDetailLine() {
+  if (serverAbsent) return 'local-only — no server here';
+  if (syncStatus === 'locked') return 'enter your sync key';
+  if (syncStatus === 'offline') return 'offline — will sync later';
+  if (syncStatus === 'err') return 'sync error — will retry';
+  if (syncState.lastSyncAt) {
+    const m = Math.round((Date.now() - syncState.lastSyncAt) / 60000);
+    return m < 1 ? 'synced just now' : 'synced ' + (m < 60 ? m + 'm' : Math.round(m / 60) + 'h') + ' ago';
+  }
+  return 'not synced yet';
+}
+function setSyncStatus(s) { syncStatus = s; updateSyncPills(); }
+function scheduleSync() { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync('change'), 1200); }
+
+async function sync(reason) {
+  if (serverAbsent) return;
+  if (!navigator.onLine) { setSyncStatus('offline'); return; }
+  if (syncing) { syncQueued = true; return; }
+  syncing = true;
+  setSyncStatus('syncing');
+  try {
+    const t0 = Date.now();
+    const push = items.filter((i) => !i.demo && (i.updatedAt || 0) > (syncState.pushedAt || 0));
+    const res = await fetch('api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Flips-Key': syncState.key || '' },
+      body: JSON.stringify({ since: syncState.since || 0, items: push }),
+    });
+    if (res.status === 404 || res.status === 501) { serverAbsent = true; setSyncStatus('local'); return; }
+    if (res.status === 401) { setSyncStatus('locked'); return; }
+    if (!res.ok) throw new Error('http ' + res.status);
+    const data = await res.json();
+    let changed = false;
+    const byId = new Map(items.map((i) => [i.id, i]));
+    (data.items || []).forEach((raw) => {
+      if (!raw || typeof raw !== 'object') return;
+      const r = normItem(raw);
+      const l = byId.get(r.id);
+      if (!l) { items.push(r); byId.set(r.id, r); changed = true; }
+      else if ((r.updatedAt || 0) > (l.updatedAt || 0)) { Object.assign(l, r); changed = true; }
+    });
+    syncState.since = typeof data.now === 'number' ? data.now : Date.now();
+    syncState.pushedAt = t0;
+    syncState.lastSyncAt = Date.now();
+    saveSyncState();
+    if (changed) {
+      await store.replaceAll(items);
+      if ($('.sheet-wrap')) renderPending = true;
+      else render();
+    }
+    setSyncStatus('ok');
+  } catch (e) {
+    setSyncStatus('err');
+  } finally {
+    syncing = false;
+    if (syncQueued) { syncQueued = false; setTimeout(() => sync('queued'), 100); }
+  }
+}
+
+window.addEventListener('online', () => { serverAbsent = false; sync('online'); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sync('visible'); });
+
+/* inline "new person" input commit */
+document.addEventListener('keydown', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('chip-in')) return;
+  if (e.key === 'Enter') { e.preventDefault(); commitNewPerson(e.target.closest('[data-chips]'), e.target.value); }
+  else if (e.key === 'Escape') { commitNewPerson(e.target.closest('[data-chips]'), ''); }
+});
+document.addEventListener('focusout', (e) => {
+  if (e.target.classList && e.target.classList.contains('chip-in') && e.target.isConnected) {
+    commitNewPerson(e.target.closest('[data-chips]'), e.target.value);
+  }
+});
+
 /* ---------------- service worker ---------------- */
 function swAllowed() {
   return 'serviceWorker' in navigator &&
@@ -1245,4 +1537,5 @@ function checkForUpdate() {
   if (swAllowed()) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
+  sync('boot');
 })();

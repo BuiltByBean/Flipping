@@ -1,5 +1,5 @@
 /* Flips service worker — offline-first, stale-while-revalidate. */
-const CACHE = 'flips-v1.0.0';
+const CACHE = 'flips-v1.1.0';
 const CORE = [
   './',
   './index.html',
@@ -33,6 +33,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.includes('/api/')) return; // sync API is always network
 
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
