@@ -378,10 +378,23 @@ details.more[open] summary::after{transform:rotate(180deg)}
    numbers fall only a hair short of it. Re-measures on rotate/resize. */
 (function () {
   var probe = document.getElementById('vv-probe');
+  var lastKb = 0;
+  // One-shot, idempotent reveal: scroll the sheet's own scroller by exactly
+  // the overlap. Once the field is visible it does NOTHING — so it can never
+  // feed back into scroll events and oscillate (the "jumps up and down" bug).
+  function revealFocused() {
+    var ae = document.activeElement;
+    if (!ae || (ae.tagName !== 'INPUT' && ae.tagName !== 'TEXTAREA')) return;
+    var sb = ae.closest ? ae.closest('.sheet-body') : null;
+    if (!sb) return;
+    var visBottom = ((window.visualViewport && window.visualViewport.height) || window.innerHeight) - 14;
+    var r = ae.getBoundingClientRect();
+    if (r.bottom > visBottom) sb.scrollTop += (r.bottom - visBottom);
+    else if (r.top < 58) sb.scrollTop -= (58 - r.top);
+  }
   function fit() {
     var vvp = window.visualViewport;
     var vv = (vvp && vvp.height) || 0;
-    var off = (vvp && vvp.offsetTop) || 0;
     var ih = window.innerHeight || 0;
     var pr = probe ? probe.getBoundingClientRect().height : 0;
     var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) ||
@@ -401,23 +414,22 @@ details.more[open] summary::after{transform:rotate(180deg)}
     }
     if (h && h > 250) document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
 
-    // Keyboard overlap, measured against where FIXED elements anchor (the
-    // probe). Sheets sit at bottom:var(--kb) so they ride the keyboard's top
-    // edge instead of staying glued behind it — and drop back when it closes.
+    // Keyboard overlap: layout probe height minus visual height. Only applied
+    // when it actually CHANGES (keyboard open/close/resize) — never per
+    // scroll frame, and pans don't move the sheet. Sheets sit at
+    // bottom:var(--kb) so they ride the keyboard's top edge.
     var kb = 0;
-    if (vvp && pr) kb = Math.max(0, Math.round(pr - vv - off));
-    document.documentElement.style.setProperty('--kb', kb + 'px');
-    // keep the field being typed in visible inside the sheet's own scroller
-    var ae = document.activeElement;
-    if (kb > 0 && ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') &&
-        ae.closest && ae.closest('.sheet-body')) {
-      setTimeout(function () { try { ae.scrollIntoView({ block: 'center' }); } catch (e) {} }, 60);
+    if (vvp && pr) kb = Math.max(0, Math.round(pr - vv));
+    if (kb < 24) kb = 0; // sub-keyboard noise
+    if (kb !== lastKb) {
+      lastKb = kb;
+      document.documentElement.style.setProperty('--kb', kb + 'px');
     }
+    if (kb > 0) setTimeout(revealFocused, 50);
   }
   fit();
   if (window.visualViewport) {
     window.visualViewport.addEventListener('resize', fit);
-    window.visualViewport.addEventListener('scroll', fit);
   }
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });

@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.8.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -143,6 +143,7 @@ function normItem(r) {
     dimD: r.dimD == null || r.dimD === '' ? null : num(r.dimD),
     photo: typeof r.photo === 'string' && r.photo.startsWith('data:image') ? r.photo : null,
     owner: String(r.owner || '').trim().slice(0, 40),
+    lbExempt: !!r.lbExempt,
     deleted: !!r.deleted,
     updatedAt: typeof r.updatedAt === 'number' && r.updatedAt > 0 ? r.updatedAt : (r.createdAt || Date.now()),
     demo: !!r.demo,
@@ -316,7 +317,7 @@ function avatarHTML(name) {
     ((h + 42) % 360) + ' 72% 46%))">' + esc(initials) + '</span>';
 }
 function leaderboardRows() {
-  const alive = live();
+  const alive = live().filter((i) => !i.lbExempt); // items opted out of the leaderboard don't count here
   const sold = alive.filter(isSold);
   const names = new Set();
   alive.forEach((i) => { if (i.owner) names.add(i.owner); });
@@ -366,6 +367,8 @@ function computeStats() {
   const invested = inv.reduce((a, i) => a + costOf(i), 0);        // cash sitting in unsold stock
   const investedAll = live().reduce((a, i) => a + costOf(i), 0);  // all-time buy-in, sold included
   const netCash = profit - invested;                              // liquid: profit minus what's tied up
+  const priced = inv.filter((i) => i.listPrice != null);          // potential: asks minus what's into them
+  const potential = priced.reduce((a, i) => a + (num(i.listPrice) - costOf(i)), 0);
   const withDays = sold.filter((i) => i.sellDate && i.buyDate);
   const avgDays = withDays.length
     ? Math.round(withDays.reduce((a, i) => a + (daysBetween(i.buyDate, i.sellDate) || 0), 0) / withDays.length)
@@ -378,7 +381,9 @@ function computeStats() {
   Object.entries(byMonth).forEach(([k, v]) => { if (!bestMonth || v > bestMonth.v) bestMonth = { k, v }; });
 
   const top = sold.slice().sort((a, b) => profitOf(b) - profitOf(a)).slice(0, 3);
-  return { sold, inv, profit, revenue, roi, cur, delta, invested, investedAll, netCash, avgDays, avgFlip, bestMonth, top };
+  return { sold, inv, profit, revenue, roi, cur, delta, invested, investedAll, netCash,
+    potential, pricedCount: priced.length, unpricedCount: inv.length - priced.length,
+    avgDays, avgFlip, bestMonth, top };
 }
 
 function groupBy(soldItems, keyFn, labelFn) {
@@ -584,9 +589,11 @@ function renderDashboard() {
     '<div class="stat"><div class="k">Earned</div><div class="v">' + money(s.revenue) + '</div><div class="d">gross sales back</div></div>' +
     '</div>';
 
-  h += '<div class="stats two rise" style="animation-delay:.08s">' +
+  h += '<div class="stats rise" style="animation-delay:.08s">' +
     '<div class="stat"><div class="k">In inventory</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' waiting</div></div>' +
     '<div class="stat"><div class="k">Net cash</div><div class="v ' + (s.netCash > 0 ? 'pos' : s.netCash < 0 ? 'neg' : '') + '">' + money(s.netCash, true) + '</div><div class="d">profit − inventory</div></div>' +
+    '<div class="stat"><div class="k">Potential</div><div class="v ' + (s.potential > 0 ? 'pos' : s.potential < 0 ? 'neg' : '') + '">' + money(s.potential, true) + '</div><div class="d">' +
+    (s.pricedCount ? 'if all sell at ask' + (s.unpricedCount ? ' · ' + s.unpricedCount + ' unpriced' : '') : 'no asking prices set') + '</div></div>' +
     '</div>';
 
   const chartHtml = chartSVG();
@@ -1214,8 +1221,24 @@ function detailBodyHTML(it) {
     (sold
       ? '<button class="btn" data-edit="' + it.id + '">Edit</button><button class="btn" data-revert="' + it.id + '">Back to inventory</button>'
       : '<button class="btn" data-edit="' + it.id + '">Edit</button><button class="btn btn-primary" data-sold="' + it.id + '">Mark sold</button>') +
+    '<button class="btn btn-ghost full" data-lbtoggle="' + it.id + '" style="' +
+    (it.lbExempt ? 'color:var(--amber);border-color:rgba(251,191,36,.35)' : 'color:var(--sub)') + '">' +
+    (it.lbExempt ? '🏆 Hidden from leaderboard — tap to include' : '🏆 Hide from leaderboard') + '</button>' +
     '<button class="btn btn-danger full" data-del="' + it.id + '">Delete this flip</button>' +
     '</div>';
+}
+
+/* -------- leaderboard opt-out (works on sold items too) -------- */
+async function toggleLeaderboard(id) {
+  const it = items.find((x) => x.id === id);
+  if (!it) return;
+  it.lbExempt = !it.lbExempt;
+  touch(it);
+  await store.save(it);
+  scheduleSync();
+  toast(it.lbExempt ? 'Hidden from the leaderboard' : 'Back on the leaderboard', 'good');
+  renderPending = true;
+  refreshDetail(id);
 }
 
 /* -------- repairs & upgrades -------- */
@@ -1689,6 +1712,8 @@ document.addEventListener('click', (e) => {
     }
   }
 
+  const lbt = t.closest('[data-lbtoggle]');
+  if (lbt) { toggleLeaderboard(lbt.dataset.lbtoggle); return; }
   const af = t.closest('[data-addfix]');
   if (af) { addFix(af.dataset.addfix); return; }
   const dfx = t.closest('[data-delfix]');
