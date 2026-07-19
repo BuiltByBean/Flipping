@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.12.0';
+const APP_VERSION = '1.13.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -153,14 +153,15 @@ function normItem(r) {
     demo: !!r.demo,
     createdAt: r.createdAt || Date.now(),
     priceHistory: Array.isArray(r.priceHistory)
-      ? r.priceHistory.filter((e) => e && typeof e.p === 'number' && isFinite(e.p) && validYMD(e.d)).slice(0, 60)
+      ? r.priceHistory.filter((e) => e && typeof e.p === 'number' && isFinite(e.p) && validYMD(e.d))
+          .map((e) => Object.assign({}, e)).slice(0, 60)
       : [],
     stats: r.stats && typeof r.stats === 'object'
       ? { clicks: num(r.stats.clicks), saves: num(r.stats.saves), updated: validYMD(r.stats.updated) }
       : null,
     fixes: Array.isArray(r.fixes)
       ? r.fixes.filter((f) => f && typeof f.c === 'number' && isFinite(f.c))
-          .map((f) => ({ c: Math.round(f.c * 100) / 100, note: String(f.note || '').slice(0, 80), d: validYMD(f.d) }))
+          .map((f) => Object.assign({}, f, { c: Math.round(f.c * 100) / 100, note: String(f.note || '').slice(0, 80), d: validYMD(f.d) }))
           .slice(0, 100)
       : [],
   });
@@ -175,7 +176,8 @@ function normItem(r) {
 const isSold = (it) => it.status === 'sold';
 const live = () => items.filter((i) => !i.deleted);
 const touch = (it) => { it.updatedAt = Date.now(); };
-const fixesTotal = (it) => (it.fixes || []).reduce((a, f) => a + num(f.c), 0);
+const liveFixes = (it) => (it.fixes || []).filter((f) => !f.del);
+const fixesTotal = (it) => liveFixes(it).reduce((a, f) => a + num(f.c), 0);
 const costOf = (it) => num(it.buyPrice) + num(it.extraCosts) + fixesTotal(it); // what you have into it
 const totalCostOf = (it) => costOf(it) + num(it.fees);                  // incl. selling fees
 const profitOf = (it) => num(it.sellPrice) - totalCostOf(it);           // only meaningful when sold
@@ -1022,10 +1024,11 @@ function updateProfitPreview() {
 function fixesSectionHTML(it) {
   const sold = isSold(it);
   const fixes = it.fixes || [];
-  if (sold && !fixes.length && !num(it.extraCosts)) return '';
+  const alive = liveFixes(it);
+  if (sold && !alive.length && !num(it.extraCosts)) return '';
   let h = '<label class="sec" style="margin-top:14px">Repairs &amp; upgrades</label>';
-  if (fixes.length) {
-    h += fixes.map((f, i) =>
+  if (alive.length) {
+    h += fixes.map((f, i) => f.del ? '' :
       '<div class="trow"><div class="n">' + esc(f.note || 'Fix-up') +
       (f.d ? '<small>' + fmtShort(f.d) + '</small>' : '') + '</div>' +
       '<span class="tv">' + money(f.c) + '</span>' +
@@ -1039,7 +1042,7 @@ function fixesSectionHTML(it) {
       '<input class="in" id="fix-note" placeholder="New drawer pulls" maxlength="80" style="flex:1.4;min-width:0">' +
       '<div class="money" style="flex:1;min-width:86px"><input class="in" id="fix-cost" inputmode="decimal" placeholder="0"></div>' +
       '<button class="btn" data-addfix="' + it.id + '" style="flex:none">Add</button></div>';
-    if (!fixes.length) h += '<div class="taxnote" style="margin-top:6px">Parts, paint, hardware, cleaning — each one adds to your investment in this item.</div>';
+    if (!alive.length) h += '<div class="taxnote" style="margin-top:6px">Parts, paint, hardware, cleaning — each one adds to your investment in this item.</div>';
   }
   return h;
 }
@@ -1156,7 +1159,7 @@ async function addFix(id) {
   const c = parseMoney(cEl && cEl.value);
   if (c == null) { toast('Enter what it cost', 'warn'); if (cEl) { cEl.classList.add('err'); cEl.focus(); } return; }
   it.fixes = it.fixes || [];
-  it.fixes.push({ c, note: String((nEl && nEl.value) || '').trim().slice(0, 80), d: todayYMD() });
+  it.fixes.push({ fid: uid(), c, note: String((nEl && nEl.value) || '').trim().slice(0, 80), d: todayYMD() });
   touch(it);
   await store.save(it);
   scheduleSync();
@@ -1167,7 +1170,9 @@ async function addFix(id) {
 async function removeFix(id, idx) {
   const it = items.find((x) => x.id === id);
   if (!it || !it.fixes || !it.fixes[idx]) return;
-  it.fixes.splice(idx, 1);
+  // tombstone, don't splice — the server unions arrays, so a hard removal
+  // would be resurrected by any other device's copy; del:true always wins
+  it.fixes[idx].del = true;
   touch(it);
   await store.save(it);
   scheduleSync();

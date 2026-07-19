@@ -239,8 +239,8 @@ body.locked #view{overflow:hidden}
    box measured to the real visible screen, while fixed layers mis-anchor on
    iOS standalone / scaled webviews. */
 .sheet-wrap{position:absolute;inset:0;z-index:60}
-.backdrop{position:absolute;inset:0;background:rgba(2,6,5,.6);opacity:0;transition:opacity .25s;
-  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.backdrop{position:absolute;inset:-35% 0;background:rgba(2,6,5,.6);opacity:0;transition:opacity .25s;
+  -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)} /* overdrawn past the shell so iOS keyboard pans can't expose an undimmed strip */
 .sheet{position:absolute;left:0;right:0;bottom:var(--kb,0px);max-width:640px;margin:0 auto;
   background:#101a16;border:1px solid var(--line2);border-bottom:0;
   border-radius:24px 24px 0 0;max-height:calc(var(--vvh,100vh) - var(--kb,0px) - 48px);
@@ -502,7 +502,14 @@ details.more[open] summary::after{transform:rotate(180deg)}
       lastKb = kb;
       document.documentElement.style.setProperty('--kb', kb + 'px');
     }
-    if (kb > 0) setTimeout(revealFocused, 50);
+    if (kb > 0) {
+      // iOS pans the visual viewport when the keyboard opens, sliding the
+      // view past the dimmer's edge (the "half the page unblurred" look).
+      // Snap the pan back — the sheet lift + in-sheet reveal handle
+      // keeping the field visible properly.
+      window.scrollTo(0, 0);
+      setTimeout(revealFocused, 50);
+    }
   }
   fit();
   if (window.visualViewport) {

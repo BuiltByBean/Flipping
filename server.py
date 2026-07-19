@@ -116,6 +116,62 @@ class _Conn:
         return False
 
 
+# ---------------- item merge ----------------
+# Items are document rows (one JSONB blob per item) synced last-write-wins on
+# scalars. Sub-collections (fixes, priceHistory) are APPEND-ONLY LOGS and must
+# UNION, never replace: a device holding a stale copy of an item once pushed
+# fixes: [] and flattened repairs another device had logged. Entry removal is
+# a del:true tombstone so deletions win over stale re-adds.
+
+def _entry_key(e, kind):
+    if kind == "fixes":
+        if e.get("fid"):
+            return ("fid", e.get("fid"))
+        return ("legacy", e.get("c"), e.get("note"), e.get("d"))
+    return ("ph", e.get("p"), e.get("d"))
+
+
+def _union(old_list, new_list, kind, prefer_new):
+    out, idx = [], {}
+    for e in (old_list or []):
+        if not isinstance(e, dict):
+            continue
+        k = _entry_key(e, kind)
+        idx[k] = len(out)
+        out.append(e)
+    for e in (new_list or []):
+        if not isinstance(e, dict):
+            continue
+        k = _entry_key(e, kind)
+        if k in idx:
+            cur = out[idx[k]]
+            if e.get("del"):
+                out[idx[k]] = e          # tombstones always win
+            elif cur.get("del"):
+                pass                      # never resurrect a deleted entry
+            elif prefer_new:
+                out[idx[k]] = e
+        else:
+            idx[k] = len(out)
+            out.append(e)
+    return out
+
+
+def _merge_item(old, new, new_is_newer):
+    old = old if isinstance(old, dict) else {}
+    base = dict(old)
+    if new_is_newer:
+        base.update(new)
+    base["fixes"] = _union(old.get("fixes"), new.get("fixes"), "fixes", new_is_newer)
+    base["priceHistory"] = _union(old.get("priceHistory"), new.get("priceHistory"), "ph", new_is_newer)
+    so, sn = old.get("stats"), new.get("stats")
+    if so and sn:
+        base["stats"] = sn if str(sn.get("updated") or "") >= str(so.get("updated") or "") else so
+    elif so or sn:
+        base["stats"] = sn or so
+    return base
+
+
 # ---------------- auth ----------------
 def _authed():
     if not FLIPS_KEY:
@@ -156,7 +212,7 @@ def sync():
         return jsonify(error="bad batch"), 400
 
     now = int(time.time() * 1000)
-    rows, skipped = [], 0
+    pending, skipped = [], 0
     for it in incoming:
         if not isinstance(it, dict) or it.get("demo"):
             skipped += 1
@@ -169,35 +225,42 @@ def sync():
         if not item_id or updated <= 0:
             skipped += 1
             continue
-        blob = json.dumps(it, separators=(",", ":"))
-        if len(blob) > MAX_ITEM_BYTES:
+        if len(json.dumps(it, separators=(",", ":"))) > MAX_ITEM_BYTES:
             skipped += 1
             continue
-        rows.append((item_id, blob, updated, bool(it.get("deleted")), now))
+        pending.append((item_id, it, updated))
 
     try:
         with _Conn() as conn:
             with conn.cursor() as cur:
-                if rows:
-                    from psycopg2.extras import execute_values
-                    execute_values(
-                        cur,
-                        """
-                        INSERT INTO items (id, data, updated_at, deleted, synced_at)
-                        VALUES %s
-                        ON CONFLICT (id) DO UPDATE SET
-                            -- jsonb merge, not replace: keys the pushing client
-                            -- doesn't know about (older app versions) survive
-                            -- from the stored copy instead of being stripped
-                            data       = items.data || EXCLUDED.data,
-                            updated_at = EXCLUDED.updated_at,
-                            deleted    = EXCLUDED.deleted,
-                            synced_at  = EXCLUDED.synced_at
-                        WHERE items.updated_at < EXCLUDED.updated_at
-                        """,
-                        rows,
-                        template="(%s, %s::jsonb, %s, %s, %s)",
+                if pending:
+                    cur.execute(
+                        "SELECT id, data, updated_at FROM items WHERE id = ANY(%s)",
+                        ([p[0] for p in pending],),
                     )
+                    existing = {r[0]: (r[1], r[2]) for r in cur.fetchall()}
+                    for item_id, inc, updated in pending:
+                        ex = existing.get(item_id)
+                        if ex is None:
+                            merged, final_updated = inc, updated
+                        else:
+                            ex_data, ex_updated = ex
+                            merged = _merge_item(ex_data, inc, updated > ex_updated)
+                            final_updated = max(updated, ex_updated)
+                        merged["updatedAt"] = final_updated
+                        cur.execute(
+                            """
+                            INSERT INTO items (id, data, updated_at, deleted, synced_at)
+                            VALUES (%s, %s::jsonb, %s, %s, %s)
+                            ON CONFLICT (id) DO UPDATE SET
+                                data       = EXCLUDED.data,
+                                updated_at = EXCLUDED.updated_at,
+                                deleted    = EXCLUDED.deleted,
+                                synced_at  = EXCLUDED.synced_at
+                            """,
+                            (item_id, json.dumps(merged, separators=(",", ":")),
+                             final_updated, bool(merged.get("deleted")), now),
+                        )
                 cur.execute(
                     "SELECT data FROM items WHERE synced_at >= %s ORDER BY synced_at",
                     (since,),
