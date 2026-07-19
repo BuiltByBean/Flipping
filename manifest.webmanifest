@@ -1,0 +1,16 @@
+{
+  "name": "Flips — Resale Tracker",
+  "short_name": "Flips",
+  "description": "Track what you buy, what you sell, and what you pocket. Garage sales, estate sales, FB Marketplace.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a100e",
+  "theme_color": "#0a100e",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
