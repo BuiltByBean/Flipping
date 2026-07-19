@@ -352,6 +352,17 @@ details.more[open] summary::after{transform:rotate(180deg)}
 .chip-in{height:37px;border-radius:99px;border:1px solid rgba(52,211,153,.55);background:rgba(52,211,153,.07);
   color:var(--txt);font-size:16px;font-family:inherit;padding:0 13px;outline:none;width:150px}
 
+/* ---------- taxes ---------- */
+.trow{display:flex;align-items:center;gap:10px;padding:8.5px 0;border-bottom:1px solid var(--line2)}
+.trow:last-child{border-bottom:0}
+.trow .n{flex:1;min-width:0;font-size:13.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.trow .n small{display:block;color:var(--faint);font-weight:500;font-size:11px}
+.trow .tv{font-weight:750;font-variant-numeric:tabular-nums;font-size:13.5px;flex:none}
+.trow .tv.save{color:var(--pos)}
+.kv .cell.hl{background:rgba(52,211,153,.1);border-color:rgba(52,211,153,.35)}
+.taxnote{margin-top:13px;font-size:12px;color:var(--faint);line-height:1.6}
+.taxnote b{color:var(--sub)}
+
 .hidden{display:none!important}
 </style>
 </head>

@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -362,6 +362,60 @@ function groupBy(soldItems, keyFn, labelFn) {
   return Array.from(m.values()).sort((a, b) => b.v - a.v);
 }
 
+/* ---------------- tax engine ----------------
+   Single-member Texas LLC = disregarded entity -> Schedule C on the 1040.
+   Per tax year (by sell date):
+     net       = all profits MINUS all losses on items sold that year
+     SE tax    = 15.3% of 92.35% of net (12.4% Social Security capped at the
+                 wage base + 2.9% Medicare); $0 if net SE earnings < $400;
+                 SS part drops out if a W-2 job already maxes Social Security
+     1/2 SE    = deducted from income before income tax (above the line)
+     QBI       = 20% deduction (permanent under OBBBA); from 2026, minimum
+                 $400 once active QBI >= $1,000
+     income tax= remainder x your marginal bracket
+   Texas: no personal income tax; franchise tax $0 under $2.65M revenue;
+   marketplaces (FB, eBay, Mercari, OfferUp) collect TX sales tax for you.
+   Net-loss year -> $0 owed (the loss can offset other 1040 income). */
+const SS_WAGE_BASE = { 2025: 176100, 2026: 184500 };
+const TAX_BRACKETS = [10, 12, 22, 24, 32, 35, 37];
+const wageBaseFor = (y) => SS_WAGE_BASE[y] || SS_WAGE_BASE[2026];
+function taxCfg() {
+  return {
+    bracket: typeof syncState.taxBracket === 'number' ? syncState.taxBracket : 22,
+    ssMaxed: !!syncState.ssMaxed,
+  };
+}
+function taxYears() {
+  const ys = new Set(live().filter(isSold).map((i) => (i.sellDate || '').slice(0, 4)).filter(Boolean));
+  return Array.from(ys).sort().reverse();
+}
+function defaultTaxYear() {
+  const ys = taxYears();
+  const cur = String(new Date().getFullYear());
+  return ys.includes(cur) ? cur : (ys[0] || cur);
+}
+function computeTaxes(year) {
+  const cfg = taxCfg();
+  const sold = live().filter(isSold).filter((i) => (i.sellDate || '').slice(0, 4) === String(year));
+  const net = sold.reduce((a, i) => a + profitOf(i), 0);
+  let se = 0, qbiDed = 0, incomeTax = 0, total = 0;
+  if (net > 0) {
+    const seBase = net * 0.9235;
+    if (seBase >= 400) {
+      const ss = cfg.ssMaxed ? 0 : 0.124 * Math.min(seBase, wageBaseFor(Number(year)));
+      se = ss + 0.029 * seBase;
+    }
+    const halfSE = se / 2;
+    const qbiBase = Math.max(0, net - halfSE);
+    qbiDed = 0.20 * qbiBase;
+    if (Number(year) >= 2026 && qbiBase >= 1000) qbiDed = Math.max(qbiDed, 400);
+    incomeTax = Math.max(0, net - halfSE - qbiDed) * (cfg.bracket / 100);
+    total = se + incomeTax;
+  }
+  const eff = net > 0 ? total / net : 0;
+  return { year: String(year), sold, net, se, incomeTax, qbiDed, total, eff, afterTax: net - total, cfg };
+}
+
 /* ---------------- monthly chart ---------------- */
 let chartData = [];
 function chartSVG() {
@@ -528,6 +582,17 @@ function renderDashboard() {
           '<span class="lb-p ' + (r.profit >= 0 ? 'pos' : 'neg') + '">' + money(r.profit, true) + '</span></div>';
       }).join('') + '</div>';
   }
+
+  const tx = computeTaxes(defaultTaxYear());
+  h += '<div class="card rise" style="animation-delay:.15s;cursor:pointer" data-action="taxes">' +
+    '<h2>Taxes <span class="hint">est. ' + tx.year + ' · tap for breakdown</span></h2>' +
+    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
+    '<span style="font-size:26px;font-weight:800;font-variant-numeric:tabular-nums">' + money(tx.total) + '</span>' +
+    '<span style="color:var(--sub);font-size:13px">' +
+    (tx.net > 0
+      ? 'set aside ≈' + Math.round(tx.eff * 100) + '% · after-tax ' + money(tx.afterTax, true)
+      : (tx.net < 0 ? 'net loss — nothing owed' : 'no sales yet in ' + tx.year)) +
+    '</span></div></div>';
 
   if (s.sold.length) {
     const cats = groupBy(s.sold, (i) => i.category, catLabel).slice(0, 6);
@@ -1052,6 +1117,77 @@ function openDetailSheet(id) {
   );
 }
 
+/* -------- taxes sheet -------- */
+let taxYearSel = null;
+function openTaxesSheet() {
+  taxYearSel = defaultTaxYear();
+  openSheet(sheetHead('Tax estimate') + '<div class="sheet-body" id="tax-body">' + taxBodyHTML() + '</div>');
+}
+function refreshTaxes() {
+  const b = $('#tax-body');
+  if (b) b.innerHTML = taxBodyHTML();
+}
+function taxBodyHTML() {
+  const ys = taxYears();
+  const t = computeTaxes(taxYearSel || defaultTaxYear());
+  const cell = (k, v, hl) => '<div class="cell' + (hl ? ' hl' : '') + '"><span>' + k + '</span><b>' + v + '</b></div>';
+  let h = '';
+
+  if (ys.length > 1) {
+    h += '<div class="chips" style="margin-bottom:12px">' +
+      ys.map((y) => '<button type="button" class="chip' + (y === t.year ? ' sel' : '') + '" data-taxyear="' + y + '">' + y + '</button>').join('') +
+      '</div>';
+  }
+
+  h += '<div class="kv" style="margin:2px 0 0">' +
+    cell('Net profit ' + t.year, money(t.net, true)) +
+    cell('Self-employment tax', money(t.se)) +
+    cell('Income tax (after QBI)', money(t.incomeTax)) +
+    cell('Total est. owed', money(t.total), true) +
+    cell('Set aside per sale', (t.net > 0 ? '≈' + Math.round(t.eff * 100) + '% of profit' : '—')) +
+    cell('After-tax profit', money(t.afterTax, true)) +
+    '</div>';
+
+  h += '<div class="taxnote"><b>Quarterly estimates (IRS 1040-ES):</b> Apr 15 · Jun 15 · Sep 15 · Jan 15. Pay as you go and there’s no surprise in April.</div>';
+
+  h += '<label class="sec">Your federal tax bracket</label><div class="chips">' +
+    TAX_BRACKETS.map((b) => '<button type="button" class="chip' + (b === t.cfg.bracket ? ' sel' : '') + '" data-taxbracket="' + b + '">' + b + '%</button>').join('') +
+    '</div>' +
+    '<label class="sec">Social Security</label>' +
+    '<div class="chips"><button type="button" class="chip' + (t.cfg.ssMaxed ? ' sel' : '') + '" data-taxss="1">My W-2 job already maxes Social Security</button></div>';
+
+  h += '<label class="sec">Per item — ' + t.year + '</label>';
+  if (!t.sold.length) {
+    h += '<div class="taxnote">No sales in ' + t.year + ' yet. Sell something and each flip’s estimated tax shows up here.</div>';
+  } else {
+    const rows = t.sold.slice().sort((a, b) => profitOf(b) - profitOf(a));
+    h += rows.map((it) => {
+      const p = profitOf(it);
+      const itax = p * t.eff;
+      const saving = itax < -0.004;
+      return '<div class="trow"><div class="n">' + esc(it.name) +
+        '<small>' + money(p, true) + ' profit · ' + fmtShort(it.sellDate) + '</small></div>' +
+        '<span class="tv' + (saving ? ' save' : '') + '">' +
+        (t.net > 0 ? money(itax, saving) + (saving ? ' saved' : '') : '$0') +
+        '</span></div>';
+    }).join('');
+    if (t.net > 0 && t.sold.some((i) => profitOf(i) < 0)) {
+      h += '<div class="taxnote">Loss items subtract from your bill — everything nets together on Schedule C.</div>';
+    }
+    if (t.net <= 0 && t.sold.length) {
+      h += '<div class="taxnote"><b>Net loss year:</b> nothing owed on your flips — and as an LLC run for profit, the loss can offset your other income on the 1040.</div>';
+    }
+  }
+
+  h += '<div class="taxnote">' +
+    '<b>How it’s figured</b> (single-member LLC → Schedule C): all ' + t.year + ' profits and losses net together · 15.3% self-employment tax on 92.35% of net profit (waived under $400 net; the 12.4% Social Security part caps at ' + money(wageBaseFor(Number(t.year))) + ') · half the SE tax is deducted · the 20% QBI deduction' + (Number(t.year) >= 2026 ? ' (min $400 once QBI ≥ $1,000)' : '') + ' · the rest at your bracket.<br>' +
+    '<b>Texas:</b> no state income tax. LLC franchise tax is $0 under $2.65M revenue — just file the free Public Information Report by May 15. FB Marketplace, eBay, Mercari and OfferUp collect Texas sales tax for you (marketplace provider law).<br>' +
+    '<b>Working in your favor:</b> deductions this app doesn’t track — mileage, supplies, phone, workspace — lower the real bill. Items still in inventory don’t count until they sell.<br>' +
+    'Estimates only, not professional tax advice.</div>';
+
+  return h;
+}
+
 /* ---------------- photo handling ---------------- */
 async function compressImage(file) {
   const url = URL.createObjectURL(file);
@@ -1375,6 +1511,13 @@ document.addEventListener('click', (e) => {
     }
   }
 
+  const ty = t.closest('[data-taxyear]');
+  if (ty) { taxYearSel = ty.dataset.taxyear; refreshTaxes(); return; }
+  const tb = t.closest('[data-taxbracket]');
+  if (tb) { syncState.taxBracket = Number(tb.dataset.taxbracket); saveSyncState(); refreshTaxes(); return; }
+  const tss = t.closest('[data-taxss]');
+  if (tss) { syncState.ssMaxed = !syncState.ssMaxed; saveSyncState(); refreshTaxes(); return; }
+
   const soldBtn = t.closest('[data-sold]');
   if (soldBtn) { closeSheet(); openSoldSheet(soldBtn.dataset.sold); return; }
 
@@ -1404,6 +1547,7 @@ document.addEventListener('click', (e) => {
   if (!act) return;
   const a = act.dataset.action;
   if (a === 'add') openItemSheet();
+  else if (a === 'taxes') openTaxesSheet();
   else if (a === 'pick-photo') { const i = $('#photo-in'); if (i) i.click(); }
   else if (a === 'remove-photo') {
     pendingPhoto = null;
