@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -585,7 +585,7 @@ function invItemHTML(it) {
     '<span class="badge">' + held + 'd held</span>' +
     (it.demo ? '<span class="badge">sample</span>' : '') +
     '</div></div>' +
-    '<button class="btn btn-mini btn-primary" data-sold="' + it.id + '">Sold</button>' +
+    '<button class="btn btn-mini btn-primary" data-sold="' + it.id + '">Mark sold</button>' +
     '</article>';
 }
 function renderInvList() {
@@ -707,12 +707,8 @@ function renderSettings() {
   $('#view').innerHTML =
     '<div class="lt rise"><h1>Settings</h1><div class="sub">Synced to your private server — offline-safe</div></div>' +
 
-    '<div class="card rise"><h2>Sync &amp; people <span class="hint" id="sync-status-line">' + syncDetailLine() + '</span></h2>' +
-    '<div class="srow" style="border-bottom:0;padding-bottom:6px"><div class="ic">🔑</div><div class="tx"><b>Sync key</b><small>Type the same key on every device that should share data</small></div></div>' +
-    '<div style="display:flex;gap:8px;margin:0 0 6px">' +
-    '<input class="in" id="sync-key" type="text" placeholder="flips-…" value="' + esc(syncState.key || '') + '" autocapitalize="off" autocomplete="off" spellcheck="false" style="flex:1">' +
-    '<button class="btn" data-action="save-key" style="flex:none">Save</button></div>' +
-    '<div class="srow" style="padding-bottom:8px"><div class="ic">🙋</div><div class="tx"><b>This device is</b><small>New flips default to this person</small></div></div>' +
+    '<div class="card rise"><h2>People &amp; sync <span class="hint" id="sync-status-line">' + syncDetailLine() + '</span></h2>' +
+    '<div class="srow" style="border-bottom:0;padding-bottom:8px"><div class="ic">🙋</div><div class="tx"><b>Who’s flipping on this phone?</b><small>Your flips get tagged to this name — that’s the whole login</small></div></div>' +
     peopleChipsHTML('person', syncState.person || '') +
     '<div style="margin-top:14px"><button class="btn" data-action="sync-now" style="width:100%">Sync now</button></div>' +
     '</div>' +
@@ -759,10 +755,8 @@ function openSheet(inner) {
   root.innerHTML = '<div class="sheet-wrap"><div class="backdrop" data-close-sheet></div>' +
     '<div class="sheet"><div class="grab"></div>' + inner + '</div></div>';
   document.body.classList.add('locked');
-  requestAnimationFrame(() => requestAnimationFrame(() => {
-    const w = $('.sheet-wrap');
-    if (w) w.classList.add('open');
-  }));
+  const w = $('.sheet-wrap');
+  if (w) { void w.offsetHeight; w.classList.add('open'); } // forced reflow — deterministic slide-in
 }
 function closeSheet() {
   const w = $('.sheet-wrap');
@@ -822,7 +816,6 @@ function syncPillText() {
     syncing: { word: 'Syncing', cls: 'syncing' },
     offline: { word: 'Offline', cls: '' },
     err: { word: 'Sync error', cls: 'err' },
-    locked: { word: 'Key needed', cls: 'err' },
     local: { word: 'Local only', cls: '' },
     idle: { word: 'Sync', cls: '' },
   };
@@ -837,6 +830,39 @@ function updateSyncPills() {
   });
   const line = $('#sync-status-line');
   if (line) line.textContent = syncDetailLine();
+}
+
+/* -------- first-run welcome: name = the whole "account" -------- */
+function openWelcomeSheet() {
+  const people = ownersList();
+  openSheet(
+    sheetHead('Who’s flipping?') +
+    '<div class="sheet-body">' +
+    '<p style="margin:2px 0 14px;color:var(--sub);font-size:14px;line-height:1.5">Type your name — that’s it, no accounts or passwords. Your flips get tagged to you and you show up on the leaderboard.</p>' +
+    (people.length
+      ? '<div class="sec" style="margin-top:0">Already flipping here</div><div class="chips" style="margin-bottom:14px">' +
+        people.map((p) => '<button type="button" class="chip" data-welcome-pick="' + esc(p) + '">' + esc(p) + '</button>').join('') +
+        '</div><div class="sec">Or someone new</div>'
+      : '') +
+    '<form id="f-person" autocomplete="off" novalidate>' +
+    '<input class="in" name="personName" placeholder="Your name" maxlength="40" autocapitalize="words">' +
+    '<div style="margin-top:14px"><button class="btn btn-primary btn-big" type="submit">Start flipping</button></div>' +
+    '<div style="text-align:center;margin-top:8px"><button type="button" class="btn btn-ghost" data-action="skip-welcome" style="color:var(--faint);font-size:13px">Maybe later</button></div>' +
+    '</form></div>'
+  );
+}
+function adoptPerson(name) {
+  name = String(name || '').trim().slice(0, 40);
+  if (!name) { toast('Type your name first', 'warn'); return; }
+  const ppl = syncState.people || [];
+  if (!ppl.includes(name)) ppl.push(name);
+  syncState.people = ppl;
+  syncState.person = name;
+  delete syncState.skippedWelcome;
+  saveSyncState();
+  closeSheet();
+  toast('You’re in, ' + name + ' — new flips get tagged to you', 'good');
+  render();
 }
 
 /* -------- add / edit sheet -------- */
@@ -1270,7 +1296,8 @@ function render() {
 function setView(v) {
   view = v;
   $$('#tabbar .tab').forEach((t) => t.classList.toggle('on', t.dataset.view === v));
-  window.scrollTo(0, 0);
+  const sc = $('#view');
+  if (sc) sc.scrollTop = 0;
   render();
 }
 
@@ -1283,6 +1310,9 @@ document.addEventListener('click', (e) => {
 
   const tab = t.closest('[data-view]');
   if (tab) { setView(tab.dataset.view); return; }
+
+  const wp = t.closest('[data-welcome-pick]');
+  if (wp) { adoptPerson(wp.dataset.welcomePick); return; }
 
   const chip = t.closest('.chip');
   if (chip) {
@@ -1365,18 +1395,8 @@ document.addEventListener('click', (e) => {
       scheduleSync();
     }
   }
-  else if (a === 'save-key') {
-    const inp = $('#sync-key');
-    syncState.key = inp ? inp.value.trim() : '';
-    saveSyncState();
-    serverAbsent = false;
-    toast(syncState.key ? 'Key saved — syncing…' : 'Key cleared', 'good');
-    sync('key');
-  }
-  else if (a === 'sync-now') {
-    if (syncStatus === 'locked' && view !== 'settings') { setView('settings'); toast('Enter your sync key first', 'warn'); }
-    else { serverAbsent = false; sync('manual'); }
-  }
+  else if (a === 'sync-now') { serverAbsent = false; sync('manual'); }
+  else if (a === 'skip-welcome') { syncState.skippedWelcome = 1; saveSyncState(); closeSheet(); }
   else if (a === 'install') {
     if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.finally(() => { deferredPrompt = null; render(); }); }
   }
@@ -1413,6 +1433,7 @@ document.addEventListener('submit', (e) => {
   const f = e.target;
   if (f.id === 'f-item') { e.preventDefault(); saveItemForm(f); }
   else if (f.id === 'f-sold') { e.preventDefault(); saveSoldForm(f); }
+  else if (f.id === 'f-person') { e.preventDefault(); adoptPerson(new FormData(f).get('personName')); }
 });
 
 window.addEventListener('beforeinstallprompt', (e) => {
@@ -1433,7 +1454,6 @@ let syncStatus = 'idle';
 
 function syncDetailLine() {
   if (serverAbsent) return 'local-only — no server here';
-  if (syncStatus === 'locked') return 'enter your sync key';
   if (syncStatus === 'offline') return 'offline — will sync later';
   if (syncStatus === 'err') return 'sync error — will retry';
   if (syncState.lastSyncAt) {
@@ -1454,13 +1474,14 @@ async function sync(reason) {
   try {
     const t0 = Date.now();
     const push = items.filter((i) => !i.demo && (i.updatedAt || 0) > (syncState.pushedAt || 0));
+    const headers = { 'Content-Type': 'application/json' };
+    if (syncState.key) headers['X-Flips-Key'] = syncState.key; // legacy — server no longer requires it
     const res = await fetch('api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Flips-Key': syncState.key || '' },
+      headers,
       body: JSON.stringify({ since: syncState.since || 0, items: push }),
     });
     if (res.status === 404 || res.status === 501) { serverAbsent = true; setSyncStatus('local'); return; }
-    if (res.status === 401) { setSyncStatus('locked'); return; }
     if (!res.ok) throw new Error('http ' + res.status);
     const data = await res.json();
     let changed = false;
@@ -1537,5 +1558,6 @@ function checkForUpdate() {
   if (swAllowed()) {
     navigator.serviceWorker.register('./sw.js').catch(() => {});
   }
-  sync('boot');
+  await sync('boot'); // pull first so the welcome sheet can offer existing names
+  if (!syncState.person && !syncState.skippedWelcome) openWelcomeSheet();
 })();
