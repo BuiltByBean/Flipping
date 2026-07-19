@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.6.1';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -138,6 +138,9 @@ function normItem(r) {
     soldVia: r.soldVia || null,
     fees: num(r.fees),
     notes: String(r.notes || '').slice(0, 4000),
+    dimH: r.dimH == null || r.dimH === '' ? null : num(r.dimH),
+    dimW: r.dimW == null || r.dimW === '' ? null : num(r.dimW),
+    dimD: r.dimD == null || r.dimD === '' ? null : num(r.dimD),
     photo: typeof r.photo === 'string' && r.photo.startsWith('data:image') ? r.photo : null,
     owner: String(r.owner || '').trim().slice(0, 40),
     deleted: !!r.deleted,
@@ -160,6 +163,14 @@ const touch = (it) => { it.updatedAt = Date.now(); };
 const costOf = (it) => num(it.buyPrice) + num(it.extraCosts);           // what you have into it
 const totalCostOf = (it) => costOf(it) + num(it.fees);                  // incl. selling fees
 const profitOf = (it) => num(it.sellPrice) - totalCostOf(it);           // only meaningful when sold
+function dimsLabel(it) {
+  const f = (v) => (v % 1 ? (+v).toFixed(1) : String(v));
+  const parts = [];
+  if (it.dimH != null) parts.push(f(it.dimH) + '″H');
+  if (it.dimW != null) parts.push(f(it.dimW) + '″W');
+  if (it.dimD != null) parts.push(f(it.dimD) + '″D');
+  return parts.join(' × ');
+}
 function roiOf(it) {
   const c = totalCostOf(it);
   return c > 0 ? (profitOf(it) / c) * 100 : null;
@@ -1017,12 +1028,18 @@ function openItemSheet(id) {
 
     saleSec +
 
-    '<details class="more"' + (it && (it.listPrice != null || it.extraCosts || it.notes) ? ' open' : '') + '><summary>More — list price, extra costs, notes</summary>' +
+    '<details class="more"' + (it && (it.listPrice != null || it.extraCosts || it.notes || it.dimH != null || it.dimW != null || it.dimD != null) ? ' open' : '') + '><summary>More — list price, dimensions, notes</summary>' +
     '<div class="frow" style="margin-top:6px">' +
     '<div><label class="sec" style="margin-top:0">Asking / listed at</label>' +
     '<div class="money"><input class="in" name="listPrice" inputmode="decimal" placeholder="—" value="' + (it && it.listPrice != null ? it.listPrice : '') + '"></div></div>' +
     '<div><label class="sec" style="margin-top:0">Extra costs</label>' +
     '<div class="money"><input class="in" name="extraCosts" inputmode="decimal" placeholder="0" value="' + (it && it.extraCosts ? it.extraCosts : '') + '"></div></div>' +
+    '</div>' +
+    '<label class="sec">Dimensions <span style="opacity:.6;text-transform:none;letter-spacing:0">(inches)</span></label>' +
+    '<div class="frow" style="grid-template-columns:1fr 1fr 1fr">' +
+    '<input class="in" name="dimH" inputmode="decimal" placeholder="Height" value="' + (it && it.dimH != null ? it.dimH : '') + '">' +
+    '<input class="in" name="dimW" inputmode="decimal" placeholder="Width" value="' + (it && it.dimW != null ? it.dimW : '') + '">' +
+    '<input class="in" name="dimD" inputmode="decimal" placeholder="Depth" value="' + (it && it.dimD != null ? it.dimD : '') + '">' +
     '</div>' +
     '<label class="sec">Notes</label>' +
     '<textarea class="in" name="notes" placeholder="Condition, model, who to sell to…">' + esc(it ? it.notes : '') + '</textarea>' +
@@ -1148,6 +1165,7 @@ function detailBodyHTML(it) {
   }
   kv += cell('Source', esc(srcLabel(it.source)));
   kv += cell('Category', catEmoji(it.category) + ' ' + esc(catLabel(it.category)));
+  if (dimsLabel(it)) kv += cell('Dimensions', dimsLabel(it));
   if (it.owner) kv += cell('Owner', esc(it.owner));
 
   return (it.photo ? '<img class="dphoto" src="' + it.photo + '" alt="">' : '') +
@@ -1324,6 +1342,9 @@ async function saveItemForm(f) {
   }
   base.extraCosts = parseMoney(fd.get('extraCosts')) || 0;
   base.notes = String(fd.get('notes') || '').trim().slice(0, 4000);
+  base.dimH = parseMoney(fd.get('dimH'));
+  base.dimW = parseMoney(fd.get('dimW'));
+  base.dimD = parseMoney(fd.get('dimD'));
   base.owner = String(fd.get('owner') || '').trim().slice(0, 40);
   if (pendingPhoto !== undefined) base.photo = pendingPhoto;
   if (it && isSold(it)) {
@@ -1450,7 +1471,7 @@ function exportJSON() {
 }
 function exportCSV() {
   const cols = ['Name', 'Owner', 'Category', 'Source', 'Status', 'Buy Price', 'Buy Date', 'Extra Costs', 'List Price',
-    'Sell Price', 'Sell Date', 'Sold Via', 'Fees', 'Profit', 'ROI %', 'Days Held', 'Notes'];
+    'Sell Price', 'Sell Date', 'Sold Via', 'Fees', 'Profit', 'ROI %', 'Days Held', 'Height (in)', 'Width (in)', 'Depth (in)', 'Notes'];
   const q = (v) => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
   const rows = live().map((it) => {
     const sold = isSold(it);
@@ -1460,7 +1481,7 @@ function exportCSV() {
       sold && it.sellPrice != null ? it.sellPrice : '', sold ? (it.sellDate || '') : '',
       sold ? viaLabel(it.soldVia) : '', sold ? (it.fees || '') : '',
       sold ? profitOf(it).toFixed(2) : '', sold && roiOf(it) != null ? Math.round(roiOf(it)) : '',
-      daysHeld(it), it.notes,
+      daysHeld(it), it.dimH != null ? it.dimH : '', it.dimW != null ? it.dimW : '', it.dimD != null ? it.dimD : '', it.notes,
     ].map(q).join(',');
   });
   const csv = '\uFEFF' + cols.map(q).join(',') + '\r\n' + rows.join('\r\n');
@@ -1520,9 +1541,10 @@ function buildSample() {
   ].map((it, i) => {
     it.listPrice = [null, null, null, null, null, null, null, null, null, null, null, null, 85, 90, 65, 80][i];
     it.owner = ['Mike', 'Sam', 'Mike', 'Mike', 'Sam', 'Sam', 'Mike', 'Sam', 'Mike', 'Sam', 'Sam', 'Mike', 'Mike', 'Sam', 'Mike', 'Sam'][i];
-    if (it.id === 'demo-13') { // show off price-drop + stats tracking
+    if (it.id === 'demo-13') { // show off price-drop + stats + dimensions tracking
       it.priceHistory = [{ p: 110, d: daysAgoYMD(18) }, { p: 95, d: daysAgoYMD(10) }, { p: 85, d: daysAgoYMD(4) }];
       it.stats = { clicks: 63, saves: 9, updated: daysAgoYMD(1) };
+      it.dimH = 72; it.dimW = 31; it.dimD = 12;
     } else if (it.listPrice != null && !(it.priceHistory || []).length) {
       it.priceHistory = [{ p: it.listPrice, d: it.buyDate }];
     }
