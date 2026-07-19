@@ -32,8 +32,11 @@ html{height:100%}
 /* App-shell layout: the BODY never scrolls — #view scrolls internally and the
    tab bar is a normal flex row. No position:fixed nav, so iOS standalone can't
    mis-place it on first paint (the "buttons only work after they jump" bug). */
+/* NO viewport units for the shell height — iOS standalone mis-computes
+   dvh/vh (reserves phantom Safari-chrome space). --vvh is measured from
+   visualViewport by the inline script below and tracks rotation/resize. */
 body{
-  margin:0;height:100%;height:100dvh;overflow:hidden;
+  margin:0;height:100%;height:var(--vvh,100%);overflow:hidden;
   display:flex;flex-direction:column;
   background:var(--bg);color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -218,7 +221,7 @@ body.locked #view{overflow:hidden}
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
 .sheet{position:absolute;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;
   background:#101a16;border:1px solid var(--line2);border-bottom:0;
-  border-radius:24px 24px 0 0;max-height:calc(100vh - 48px);max-height:calc(100dvh - 48px);
+  border-radius:24px 24px 0 0;max-height:calc(var(--vvh,100vh) - 48px);
   display:flex;flex-direction:column;
   transform:translateY(103%);transition:transform .3s cubic-bezier(.2,.75,.25,1);
   box-shadow:0 -12px 44px rgba(0,0,0,.5)}
@@ -348,6 +351,23 @@ details.more[open] summary::after{transform:rotate(180deg)}
 </style>
 </head>
 <body>
+<script>
+/* Size the app shell to the REAL visible viewport. iOS standalone lies in
+   dvh/vh units (phantom browser-chrome space), so measure instead — and
+   keep measuring so the nav row and its tap targets ride the true bottom
+   edge through rotation, resize, and Safari chrome collapse. */
+(function () {
+  function fit() {
+    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
+    document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
+  }
+  fit();
+  if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+  window.addEventListener('resize', fit);
+  window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });
+  window.addEventListener('pageshow', fit);
+})();
+</script>
 <main id="view" aria-live="polite"></main>
 
 <nav id="tabbar">

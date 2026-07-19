@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -775,8 +775,10 @@ function closeSheet() {
   w.classList.remove('open');
   document.body.classList.remove('locked');
   setTimeout(() => {
-    $('#sheet-root').innerHTML = '';
-    if (renderPending) { renderPending = false; render(); }
+    // Only remove THIS wrap — if a new sheet replaced it (detail → Mark sold),
+    // the old node is disconnected and must not wipe the new one.
+    if (w.isConnected) w.remove();
+    if (!$('.sheet-wrap') && renderPending) { renderPending = false; render(); }
   }, 300);
 }
 function sheetHead(title) {
