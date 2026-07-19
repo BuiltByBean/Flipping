@@ -2,7 +2,7 @@
 <html lang="en" style="background:#0a100e;color-scheme:dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Flips — Resale Tracker</title>
 <meta name="description" content="Track what you buy, what you sell, and what you pocket.">
 <meta name="theme-color" content="#0a100e">
@@ -28,7 +28,7 @@
   --r-lg:20px; --r-md:16px; --r-sm:12px;
   --tabh:64px;
 }
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 html{height:100%}
 /* App-shell layout: the BODY never scrolls — #view scrolls internally and the
    tab bar is a normal flex row. No position:fixed nav, so iOS standalone can't
@@ -38,6 +38,7 @@ html{height:100%}
    visualViewport by the inline script below and tracks rotation/resize. */
 body{
   margin:0;height:100%;height:var(--vvh,100%);overflow:hidden;
+  position:relative; /* overlays (sheets/toasts) anchor to the shell, never to position:fixed — fixed mis-anchors on iOS standalone */
   display:flex;flex-direction:column;
   background:var(--bg);color:var(--txt);
   font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
@@ -216,13 +217,16 @@ body.locked #view{overflow:hidden}
 .fab svg{width:26px;height:26px}
 
 /* ---------- sheets ---------- */
-#sheet-root{position:relative;z-index:60}
-.sheet-wrap{position:fixed;inset:0;z-index:60}
+#sheet-root{display:contents} /* pass-through: .sheet-wrap anchors to BODY */
+/* Overlays live INSIDE the body shell (absolute, not fixed): body is the one
+   box measured to the real visible screen, while fixed layers mis-anchor on
+   iOS standalone / scaled webviews. */
+.sheet-wrap{position:absolute;inset:0;z-index:60}
 .backdrop{position:absolute;inset:0;background:rgba(2,6,5,.6);opacity:0;transition:opacity .25s;
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
-.sheet{position:absolute;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;
+.sheet{position:absolute;left:0;right:0;bottom:var(--kb,0px);max-width:640px;margin:0 auto;
   background:#101a16;border:1px solid var(--line2);border-bottom:0;
-  border-radius:24px 24px 0 0;max-height:calc(var(--vvh,100vh) - 48px);
+  border-radius:24px 24px 0 0;max-height:calc(var(--vvh,100vh) - var(--kb,0px) - 48px);
   display:flex;flex-direction:column;
   transform:translateY(103%);transition:transform .3s cubic-bezier(.2,.75,.25,1);
   box-shadow:0 -12px 44px rgba(0,0,0,.5)}
@@ -306,7 +310,7 @@ details.more[open] summary::after{transform:rotate(180deg)}
 .foot b{color:var(--sub)}
 
 /* ---------- toasts ---------- */
-#toast-root{position:fixed;top:calc(env(safe-area-inset-top) + 10px);left:0;right:0;z-index:80;
+#toast-root{position:absolute;top:calc(env(safe-area-inset-top) + 10px);left:0;right:0;z-index:80;
   display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none}
 .toast{background:#152019;border:1px solid var(--line);color:var(--txt);font-size:13.5px;font-weight:600;
   padding:11px 18px;border-radius:99px;box-shadow:0 10px 30px rgba(0,0,0,.45);
@@ -364,7 +368,9 @@ details.more[open] summary::after{transform:rotate(180deg)}
 (function () {
   var probe = document.getElementById('vv-probe');
   function fit() {
-    var vv = (window.visualViewport && window.visualViewport.height) || 0;
+    var vvp = window.visualViewport;
+    var vv = (vvp && vvp.height) || 0;
+    var off = (vvp && vvp.offsetTop) || 0;
     var ih = window.innerHeight || 0;
     var pr = probe ? probe.getBoundingClientRect().height : 0;
     var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) ||
@@ -382,14 +388,43 @@ details.more[open] summary::after{transform:rotate(180deg)}
     } else {
       h = vv || ih || pr;
     }
-    if (h) document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
+    if (h && h > 250) document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
+
+    // Keyboard overlap, measured against where FIXED elements anchor (the
+    // probe). Sheets sit at bottom:var(--kb) so they ride the keyboard's top
+    // edge instead of staying glued behind it — and drop back when it closes.
+    var kb = 0;
+    if (vvp && pr) kb = Math.max(0, Math.round(pr - vv - off));
+    document.documentElement.style.setProperty('--kb', kb + 'px');
+    // keep the field being typed in visible inside the sheet's own scroller
+    var ae = document.activeElement;
+    if (kb > 0 && ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA') &&
+        ae.closest && ae.closest('.sheet-body')) {
+      setTimeout(function () { try { ae.scrollIntoView({ block: 'center' }); } catch (e) {} }, 60);
+    }
   }
   fit();
-  if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', fit);
+    window.visualViewport.addEventListener('scroll', fit);
+  }
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });
   window.addEventListener('pageshow', fit);
+  window.addEventListener('focusin', function () { setTimeout(fit, 120); });
+  window.addEventListener('focusout', function () { setTimeout(fit, 120); });
   setTimeout(fit, 60); setTimeout(fit, 400); // iOS settles the viewport late on cold launch
+
+  // Real-app feel: no pinch zoom, no double-tap zoom (viewport meta +
+  // touch-action:manipulation cover most of it; these catch iOS's extras).
+  document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+  document.addEventListener('gesturechange', function (e) { e.preventDefault(); });
+  document.addEventListener('touchmove', function (e) {
+    if (e.scale !== undefined && e.scale !== 1) e.preventDefault();
+  }, { passive: false });
+  if ('ontouchstart' in window) {
+    document.addEventListener('dblclick', function (e) { e.preventDefault(); });
+  }
 })();
 </script>
 <main id="view" aria-live="polite"></main>
