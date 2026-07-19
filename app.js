@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -363,18 +363,26 @@ function groupBy(soldItems, keyFn, labelFn) {
 /* ---------------- monthly chart ---------------- */
 let chartData = [];
 function chartSVG() {
-  const keys = lastMonths(12);
   const sold = live().filter(isSold);
+  // only months that actually have sales — no empty filler months
+  let keys = Array.from(new Set(sold.map((i) => monthKey(i.sellDate)).filter(Boolean))).sort();
+  if (keys.length > 12) keys = keys.slice(-12);
   chartData = keys.map((k) => {
     let v = 0, n = 0;
     sold.forEach((i) => { if (monthKey(i.sellDate) === k) { v += profitOf(i); n++; } });
     return { k, v, n };
   });
-  const hasData = chartData.some((d) => d.n > 0);
+  const hasData = chartData.length > 0;
   const W = 360, H = 172, padT = 18, padB = 24;
   const plotH = H - padT - padB;
-  const slot = W / 12;
-  const bw = Math.min(20, slot * 0.58);
+  const slot = W / Math.max(chartData.length, 1);
+  const bw = Math.min(44, slot * 0.58);
+  const multiYear = new Set(keys.map((k) => k.slice(0, 4))).size > 1;
+  const mlbl = (k) => {
+    const [y, m] = k.split('-').map(Number);
+    const nm = new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'short' });
+    return multiYear ? nm + ' ' + String(y).slice(2) : nm;
+  };
 
   let svg = '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg">';
   svg += '<defs><linearGradient id="gpos" x1="0" y1="0" x2="0" y2="1">' +
@@ -384,15 +392,16 @@ function chartSVG() {
 
   if (!hasData) {
     const ghost = [28, 52, 38, 66, 44, 78, 50, 88, 58, 72, 46, 82];
+    const gslot = W / 12, gbw = Math.min(20, gslot * 0.58);
     ghost.forEach((g, i) => {
       const h = (g / 100) * plotH;
-      const x = i * slot + (slot - bw) / 2;
-      svg += '<rect x="' + x.toFixed(1) + '" y="' + (padT + plotH - h).toFixed(1) + '" width="' + bw.toFixed(1) +
+      const x = i * gslot + (gslot - gbw) / 2;
+      svg += '<rect x="' + x.toFixed(1) + '" y="' + (padT + plotH - h).toFixed(1) + '" width="' + gbw.toFixed(1) +
         '" height="' + h.toFixed(1) + '" rx="4.5" fill="rgba(255,255,255,.05)"/>';
     });
-    keys.forEach((k, i) => {
+    lastMonths(12).forEach((k, i) => {
       const mi = Number(k.slice(5)) - 1;
-      svg += '<text class="axm" x="' + (i * slot + slot / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle">' +
+      svg += '<text class="axm" x="' + (i * gslot + gslot / 2).toFixed(1) + '" y="' + (H - 7) + '" text-anchor="middle">' +
         'JFMAMJJASOND'[mi] + '</text>';
     });
     return svg + '</svg>';
@@ -422,15 +431,14 @@ function chartSVG() {
       yy = zeroY; h = Math.max(3, y(d.v) - zeroY); fill = 'url(#gneg)';
     }
     const rx = Math.min(4.5, h / 2);
-    svg += '<rect id="bar-' + i + '" class="bar' + (i === 11 ? ' sel' : '') + '" x="' + x.toFixed(1) +
+    svg += '<rect id="bar-' + i + '" class="bar' + (i === chartData.length - 1 ? ' sel' : '') + '" x="' + x.toFixed(1) +
       '" y="' + yy.toFixed(1) + '" width="' + bw.toFixed(1) + '" height="' + h.toFixed(1) + '" rx="' + rx.toFixed(1) +
       '" fill="' + fill + '"/>';
   });
   keys.forEach((k, i) => {
-    const mi = Number(k.slice(5)) - 1;
-    const cur = i === 11 ? ' cur' : '';
+    const cur = i === keys.length - 1 ? ' cur' : '';
     svg += '<text class="axm' + cur + '" x="' + (i * slot + slot / 2).toFixed(1) + '" y="' + (H - 7) +
-      '" text-anchor="middle">' + 'JFMAMJJASOND'[mi] + '</text>';
+      '" text-anchor="middle">' + mlbl(k) + '</text>';
   });
   chartData.forEach((d, i) => {
     svg += '<rect data-mi="' + i + '" x="' + (i * slot).toFixed(1) + '" y="0" width="' + slot.toFixed(1) +
@@ -485,16 +493,16 @@ function renderDashboard() {
     '<div class="sub">' + s.sold.length + ' sold · ' + s.inv.length + ' in inventory · ' + money(s.revenue) + ' total sales</div>' +
     '</div>';
 
-  h += '<div class="stats rise" style="animation-delay:.05s">' +
+  h += '<div class="stats two rise" style="animation-delay:.05s">' +
+    '<div class="stat"><div class="k">Total invested</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' in inventory</div></div>' +
     '<div class="stat"><div class="k">This month</div><div class="v ' + (s.cur > 0 ? 'pos' : s.cur < 0 ? 'neg' : '') + '">' + money(s.cur, true) + '</div><div class="d">' + (s.delta ? esc(s.delta) : '&nbsp;') + '</div></div>' +
-    '<div class="stat"><div class="k">Avg ROI</div><div class="v">' + (s.roi == null ? '—' : Math.round(s.roi) + '%') + '</div><div class="d">on sold items</div></div>' +
-    '<div class="stat"><div class="k">Avg / flip</div><div class="v">' + (s.avgFlip == null ? '—' : money(s.avgFlip, true)) + '</div><div class="d">' + (s.avgDays == null ? 'no sales yet' : s.avgDays + 'd avg to sell') + '</div></div>' +
     '</div>';
 
+  const chartHtml = chartSVG();
   h += '<div class="card rise" style="animation-delay:.1s" id="chartcard">' +
     '<h2>Profit by month <span class="hint">tap a bar</span></h2>' +
-    '<div class="chart-wrap">' + chartSVG() + '</div>' +
-    '<div id="mdetail">' + mdetailHTML(11) + '</div>' +
+    '<div class="chart-wrap">' + chartHtml + '</div>' +
+    '<div id="mdetail">' + (chartData.length ? mdetailHTML(chartData.length - 1) : '') + '</div>' +
     '</div>';
 
   const lb = leaderboardRows();
@@ -513,11 +521,6 @@ function renderDashboard() {
           '<span class="lb-p ' + (r.profit >= 0 ? 'pos' : 'neg') + '">' + money(r.profit, true) + '</span></div>';
       }).join('') + '</div>';
   }
-
-  h += '<div class="stats two rise" style="animation-delay:.16s">' +
-    '<div class="stat"><div class="k">Tied up in inventory</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' waiting</div></div>' +
-    '<div class="stat"><div class="k">Best month</div><div class="v">' + (s.bestMonth ? money(s.bestMonth.v, true) : '—') + '</div><div class="d">' + (s.bestMonth ? monthLong(s.bestMonth.k) : 'sell something!') + '</div></div>' +
-    '</div>';
 
   if (s.sold.length) {
     const cats = groupBy(s.sold, (i) => i.category, catLabel).slice(0, 6);
