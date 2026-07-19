@@ -194,7 +194,7 @@ body.locked #view{overflow:hidden}
 /* ---------- tab bar ---------- */
 #tabbar{
   position:relative;z-index:40;flex:none;
-  display:grid;grid-template-columns:1fr 1fr 76px 1fr;align-items:stretch;
+  display:grid;grid-template-columns:1fr 1fr 76px 1fr 1fr;align-items:stretch;
   height:calc(var(--tabh) + env(safe-area-inset-bottom));
   padding:0 6px env(safe-area-inset-bottom);
   background:rgba(10,17,14,.86);
@@ -553,6 +553,10 @@ details.more[open] summary::after{transform:rotate(180deg)}
   <button class="tab" data-view="sold" aria-label="Sold">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.2"/><path d="m8.4 12.3 2.5 2.5 4.9-5.2"/></svg>
     <span>Sold</span>
+  </button>
+  <button class="tab" data-view="taxes" aria-label="Taxes">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M19 5 5 19"/><circle cx="6.8" cy="6.8" r="2.4"/><circle cx="17.2" cy="17.2" r="2.4"/></svg>
+    <span>Taxes</span>
   </button>
   <button class="tab" data-view="settings" aria-label="Settings">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="15" cy="6" r="2.3" fill="#0a100e"/><circle cx="9" cy="12" r="2.3" fill="#0a100e"/><circle cx="16" cy="18" r="2.3" fill="#0a100e"/></svg>

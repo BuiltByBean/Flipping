@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.10.0';
+const APP_VERSION = '1.11.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -747,8 +747,6 @@ function renderSettings() {
     '<div style="margin-top:14px"><button class="btn" data-action="sync-now" style="width:100%">Sync now</button></div>' +
     '</div>' +
 
-    taxesCardHTML('.02s') +
-
     '<div class="card rise" style="animation-delay:.03s"><h2>Backup &amp; export</h2>' +
     '<div class="srow"><div class="ic">💾</div><div class="tx"><b>Export backup</b><small>Full JSON — photos included</small></div><button class="btn btn-mini" data-action="export-json">Export</button></div>' +
     '<div class="srow"><div class="ic">📥</div><div class="tx"><b>Import backup</b><small>Restore or merge a JSON backup</small></div><button class="btn btn-mini" data-action="import">Import</button></div>' +
@@ -1206,27 +1204,18 @@ async function saveListingStats(id) {
   refreshDetail(id);
 }
 
-/* -------- taxes sheet -------- */
+/* -------- taxes page (own nav tab) -------- */
 let taxYearSel = null;
-function openTaxesSheet() {
-  taxYearSel = defaultTaxYear();
-  openSheet(sheetHead('Tax estimate') + '<div class="sheet-body" id="tax-body">' + taxBodyHTML() + '</div>');
+function renderTaxes() {
+  const ys = taxYears();
+  if (!taxYearSel || !ys.includes(taxYearSel)) taxYearSel = defaultTaxYear();
+  $('#view').innerHTML =
+    '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Taxes</h1><div class="sub">Estimates for your Texas LLC — not tax advice</div></div>' + gearBtnHTML() + '</div>' +
+    '<div class="card rise" id="tax-body" style="grid-column:1/-1;max-width:820px">' + taxBodyHTML() + '</div>';
 }
 function refreshTaxes() {
   const b = $('#tax-body');
   if (b) b.innerHTML = taxBodyHTML();
-}
-function taxesCardHTML(delay) {
-  const tx = computeTaxes(defaultTaxYear());
-  return '<div class="card rise" style="animation-delay:' + delay + ';cursor:pointer" data-action="taxes">' +
-    '<h2>Taxes <span class="hint">est. ' + tx.year + ' · tap for breakdown</span></h2>' +
-    '<div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">' +
-    '<span style="font-size:26px;font-weight:800;font-variant-numeric:tabular-nums">' + money(tx.total) + '</span>' +
-    '<span style="color:var(--sub);font-size:13px">' +
-    (tx.net > 0
-      ? 'set aside ≈' + Math.round(tx.eff * 100) + '% · after-tax ' + money(tx.afterTax, true)
-      : (tx.net < 0 ? 'net loss — nothing owed' : 'no sales yet in ' + tx.year)) +
-    '</span></div></div>';
 }
 function taxBodyHTML() {
   const ys = taxYears();
@@ -1574,6 +1563,7 @@ function render() {
   if (view === 'dashboard') renderDashboard();
   else if (view === 'inventory') renderInventory();
   else if (view === 'sold') renderSold();
+  else if (view === 'taxes') renderTaxes();
   else renderSettings();
   requestAnimationFrame(() => requestAnimationFrame(() => {
     $$('.hfill').forEach((f) => f.classList.add('go'));
@@ -1674,7 +1664,7 @@ document.addEventListener('click', (e) => {
   if (!act) return;
   const a = act.dataset.action;
   if (a === 'add') openItemSheet();
-  else if (a === 'taxes') openTaxesSheet();
+  else if (a === 'taxes') setView('taxes');
   else if (a === 'pick-photo') { const i = $('#photo-in'); if (i) i.click(); }
   else if (a === 'remove-photo') {
     pendingPhoto = null;
