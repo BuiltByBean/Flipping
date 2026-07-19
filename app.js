@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.15.0';
+const APP_VERSION = '1.15.1';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -506,11 +506,12 @@ function renderDashboard() {
   const lb = leaderboardRows();
   if (lb.length) {
     const maxAbs = Math.max(...lb.map((r) => Math.abs(r.profit)), 1);
-    const medals = ['🥇', '🥈', '🥉'];
+    const rankCls = ['r1', 'r2', 'r3'];
     h += '<div class="card rise" style="animation-delay:.13s"><h2>Leaderboard <span class="hint">total flipped profit</span></h2>' +
       lb.map((r, i) => {
         const named = r.name != null;
-        const rank = named && i < 3 ? '<span class="lb-rank m">' + medals[i] + '</span>' : '<span class="lb-rank">' + (named ? (i + 1) : '–') + '</span>';
+        const rank = '<span class="lb-rank"><span class="rankb ' + (named && i < 3 ? rankCls[i] : 'rn') + '">' +
+          (named ? (i + 1) : '–') + '</span></span>';
         const w = Math.max(3, Math.round((Math.abs(r.profit) / maxAbs) * 100));
         const sub = r.count + ' sold · ' + r.holding + ' holding' + (r.best != null && r.best > 0 ? ' · best ' + money(r.best, true) : '');
         return '<div class="lb-row">' + rank + avatarHTML(r.name) +
@@ -537,11 +538,11 @@ function renderDashboard() {
     h += '<div class="card rise" style="animation-delay:.22s"><h2>Profit by category</h2>' + hbars(cats) + '</div>';
 
     if (s.top.length) {
-      const medals = ['🥇', '🥈', '🥉'];
+      const rc = ['r1', 'r2', 'r3'];
       h += '<div class="card rise" style="animation-delay:.26s"><h2>Best flips</h2>' +
         s.top.map((it, i) => {
           const d = daysBetween(it.buyDate, it.sellDate);
-          return '<div class="toprow"><span class="medal">' + medals[i] + '</span>' +
+          return '<div class="toprow"><span class="rankb ' + rc[i] + '">' + (i + 1) + '</span>' +
             '<div class="n">' + esc(it.name) + '<small>' + money(it.buyPrice) + ' → ' + money(it.sellPrice) +
             (d != null ? ' · ' + d + ' days' : '') + '</small></div>' +
             '<span class="p">' + money(profitOf(it), true) + '</span></div>';
