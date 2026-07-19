@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -333,7 +333,9 @@ function computeStats() {
     delta = 'first sales month';
   }
 
-  const invested = inv.reduce((a, i) => a + costOf(i), 0);
+  const invested = inv.reduce((a, i) => a + costOf(i), 0);        // cash sitting in unsold stock
+  const investedAll = live().reduce((a, i) => a + costOf(i), 0);  // all-time buy-in, sold included
+  const netCash = profit - invested;                              // liquid: profit minus what's tied up
   const withDays = sold.filter((i) => i.sellDate && i.buyDate);
   const avgDays = withDays.length
     ? Math.round(withDays.reduce((a, i) => a + (daysBetween(i.buyDate, i.sellDate) || 0), 0) / withDays.length)
@@ -346,7 +348,7 @@ function computeStats() {
   Object.entries(byMonth).forEach(([k, v]) => { if (!bestMonth || v > bestMonth.v) bestMonth = { k, v }; });
 
   const top = sold.slice().sort((a, b) => profitOf(b) - profitOf(a)).slice(0, 3);
-  return { sold, inv, profit, revenue, roi, cur, delta, invested, avgDays, avgFlip, bestMonth, top };
+  return { sold, inv, profit, revenue, roi, cur, delta, invested, investedAll, netCash, avgDays, avgFlip, bestMonth, top };
 }
 
 function groupBy(soldItems, keyFn, labelFn) {
@@ -490,12 +492,17 @@ function renderDashboard() {
   h += '<div class="card hero rise">' +
     '<div class="lbl">Total profit</div>' +
     '<div class="num ' + heroCls + '" id="hero-num" data-target="' + s.profit + '">' + money(s.profit, true) + '</div>' +
-    '<div class="sub">' + s.sold.length + ' sold · ' + s.inv.length + ' in inventory · ' + money(s.revenue) + ' total sales</div>' +
+    '<div class="sub">' + s.sold.length + ' sold · ' + s.inv.length + ' in inventory</div>' +
     '</div>';
 
   h += '<div class="stats two rise" style="animation-delay:.05s">' +
-    '<div class="stat"><div class="k">Total invested</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' in inventory</div></div>' +
-    '<div class="stat"><div class="k">This month</div><div class="v ' + (s.cur > 0 ? 'pos' : s.cur < 0 ? 'neg' : '') + '">' + money(s.cur, true) + '</div><div class="d">' + (s.delta ? esc(s.delta) : '&nbsp;') + '</div></div>' +
+    '<div class="stat"><div class="k">Invested</div><div class="v">' + money(s.investedAll) + '</div><div class="d">all-time · incl. sold</div></div>' +
+    '<div class="stat"><div class="k">Earned</div><div class="v">' + money(s.revenue) + '</div><div class="d">gross sales back</div></div>' +
+    '</div>';
+
+  h += '<div class="stats two rise" style="animation-delay:.08s">' +
+    '<div class="stat"><div class="k">In inventory</div><div class="v">' + money(s.invested) + '</div><div class="d">' + s.inv.length + ' item' + (s.inv.length === 1 ? '' : 's') + ' waiting</div></div>' +
+    '<div class="stat"><div class="k">Net cash</div><div class="v ' + (s.netCash > 0 ? 'pos' : s.netCash < 0 ? 'neg' : '') + '">' + money(s.netCash, true) + '</div><div class="d">profit − inventory</div></div>' +
     '</div>';
 
   const chartHtml = chartSVG();
