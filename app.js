@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.14.0';
+const APP_VERSION = '1.15.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -587,18 +587,23 @@ function matchesQuery(it, q) {
 /* ---------------- inventory view ---------------- */
 function invItemHTML(it) {
   const held = daysHeld(it);
-  return '<article class="item card" data-open="' + it.id + '">' +
+  const cost = costOf(it);
+  const ask = it.listPrice;
+  const pot = ask != null ? ask - cost : null;
+  const dropped = (it.priceHistory || []).filter((e) => !e.del).length > 1;
+  return '<article class="item card inv" data-open="' + it.id + '">' +
     '<div class="thumb">' + (it.photo ? '<img src="' + it.photo + '" alt="">' : '<span>' + catEmoji(it.category) + '</span>') + '</div>' +
     '<div class="mid"><h3>' + esc(it.name) + '</h3>' +
-    '<div class="meta">' + money(costOf(it)) + ' · ' + srcLabel(it.source) + ' · ' + fmtShort(it.buyDate) +
-    (it.owner ? ' · ' + esc(it.owner) : '') + '</div>' +
-    '<div class="badges">' +
-    (it.listPrice != null ? '<span class="badge amber">' + ((it.priceHistory || []).length > 1 ? '↓ ' : '') + 'Listed ' + money(it.listPrice) + '</span>' : '') +
-    '<span class="badge">' + held + 'd held</span>' +
-    (it.demo ? '<span class="badge">sample</span>' : '') +
-    '</div></div>' +
-    '<button class="btn btn-mini btn-primary" data-sold="' + it.id + '">Mark sold</button>' +
-    '</article>';
+    '<div class="meta">' + srcLabel(it.source) + ' · ' + fmtShort(it.buyDate) +
+    (it.owner ? ' · ' + esc(it.owner) : '') + (it.demo ? ' · sample' : '') + '</div></div>' +
+    '<button class="soldbtn" data-sold="' + it.id + '" aria-label="Mark sold" title="Mark sold">' +
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="m8.4 12.3 2.5 2.5 4.9-5.2"/></svg></button>' +
+    '<div class="istats">' +
+    '<div><span>In</span><b>' + money(cost) + '</b></div>' +
+    '<div><span>Ask</span><b>' + (ask != null ? money(ask) + (dropped ? ' <i>↓</i>' : '') : '—') + '</b></div>' +
+    '<div><span>Potential</span><b class="' + (pot == null ? '' : pot >= 0 ? 'pos' : 'neg') + '">' + (pot != null ? money(pot, true) : '—') + '</b></div>' +
+    '<div><span>Held</span><b>' + held + 'd</b></div>' +
+    '</div></article>';
 }
 function renderInvList() {
   const box = $('#inv-list');
