@@ -17,6 +17,7 @@
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <style>
 :root{
+  --sab:env(safe-area-inset-bottom,0px);
   --bg:#0a100e; --bg2:#0d1512;
   --card:rgba(255,255,255,.045); --card2:rgba(255,255,255,.03);
   --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.05);
@@ -351,21 +352,44 @@ details.more[open] summary::after{transform:rotate(180deg)}
 </style>
 </head>
 <body>
+<div id="vv-probe" style="position:fixed;inset:0;visibility:hidden;pointer-events:none;z-index:-1"></div>
 <script>
-/* Size the app shell to the REAL visible viewport. iOS standalone lies in
-   dvh/vh units (phantom browser-chrome space), so measure instead — and
-   keep measuring so the nav row and its tap targets ride the true bottom
-   edge through rotation, resize, and Safari chrome collapse. */
+/* Size the app shell to the TRUE bottom of the glass. Every iOS standalone
+   number lies a little: dvh reserves phantom Safari chrome, and
+   innerHeight/visualViewport under-report by status-bar/home-indicator
+   slices. So: take the tallest honest measurement (a fixed inset-0 probe =
+   where fixed elements really bottom out, plus the JS viewport numbers),
+   and in installed-app mode snap to the physical screen height when the JS
+   numbers fall only a hair short of it. Re-measures on rotate/resize. */
 (function () {
+  var probe = document.getElementById('vv-probe');
   function fit() {
-    var h = (window.visualViewport && window.visualViewport.height) || window.innerHeight;
-    document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
+    var vv = (window.visualViewport && window.visualViewport.height) || 0;
+    var ih = window.innerHeight || 0;
+    var pr = probe ? probe.getBoundingClientRect().height : 0;
+    var standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) ||
+      window.navigator.standalone === true;
+    var h;
+    if (standalone) {
+      h = Math.max(pr, ih, vv);
+      var portrait = !window.matchMedia || matchMedia('(orientation: portrait)').matches;
+      var s = portrait ? Math.max(screen.height || 0, screen.width || 0)
+                       : Math.min(screen.height || 0, screen.width || 0);
+      // Installed app = full-screen webview. If the JS viewport is short of the
+      // physical screen by less than a chrome-slice, the screen is the truth.
+      // (Big differences mean split view / keyboard — keep the measurement.)
+      if (s > h && s - h <= 140) h = s;
+    } else {
+      h = vv || ih || pr;
+    }
+    if (h) document.documentElement.style.setProperty('--vvh', Math.round(h) + 'px');
   }
   fit();
   if (window.visualViewport) window.visualViewport.addEventListener('resize', fit);
   window.addEventListener('resize', fit);
   window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });
   window.addEventListener('pageshow', fit);
+  setTimeout(fit, 60); setTimeout(fit, 400); // iOS settles the viewport late on cold launch
 })();
 </script>
 <main id="view" aria-live="polite"></main>

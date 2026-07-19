@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.3.1';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -699,6 +699,14 @@ function renderSold() {
 }
 
 /* ---------------- settings view ---------------- */
+function vpDebugLine() {
+  const vvh = document.documentElement.style.getPropertyValue('--vvh') || '—';
+  const sab = (getComputedStyle(document.documentElement).getPropertyValue('--sab') || '').trim() || '0px';
+  const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  const vv = window.visualViewport ? Math.round(window.visualViewport.height) : '—';
+  return 'shell ' + vvh + ' · js ' + window.innerHeight + '/' + vv + ' · screen ' + screen.height +
+    ' · inset ' + sab + ' · ' + (standalone ? 'app' : 'browser');
+}
 function renderSettings() {
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
   const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
@@ -734,6 +742,7 @@ function renderSettings() {
     '<div class="card rise" style="animation-delay:.05s"><h2>App</h2>' +
     installRow +
     '<div class="srow"><div class="ic">🗄️</div><div class="tx"><b>Storage</b><small id="storage-est">' + live().length + ' items · ' + store.mode + '</small></div></div>' +
+    '<div class="srow"><div class="ic">📐</div><div class="tx"><b>Screen fit</b><small>' + vpDebugLine() + '</small></div></div>' +
     '<div class="srow"><div class="ic">🔄</div><div class="tx"><b>Check for updates</b><small>Version ' + APP_VERSION + '</small></div><button class="btn btn-mini" data-action="update">Check</button></div>' +
     '</div>' +
 
