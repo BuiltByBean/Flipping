@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.15.1';
+const APP_VERSION = '1.16.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -1097,7 +1097,10 @@ function openDetailSheet(id) {
 function refreshDetail(id) {
   const b = $('#detail-body');
   const it = items.find((x) => x.id === id);
-  if (b && it) b.innerHTML = detailBodyHTML(it);
+  if (!b || !it) return;
+  const keep = b.scrollTop; // logging a repair re-renders the body — don't fling the user back to the top
+  b.innerHTML = detailBodyHTML(it);
+  b.scrollTop = keep;
 }
 function detailBodyHTML(it) {
   const sold = isSold(it);

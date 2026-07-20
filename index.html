@@ -2,7 +2,12 @@
 <html lang="en" style="background:#0a100e;color-scheme:dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+<!-- NO interactive-widget=resizes-content: that asks the browser to shrink the
+     LAYOUT viewport for the keyboard, which double-counts against the --kb the
+     app measures itself (shell shrinks AND the sheet subtracts the keyboard
+     again = a 170px sliver of panel with a dead gap under it). We keep the
+     classic resizes-visual model on every platform and handle the keyboard once. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Flips — Resale Tracker</title>
 <meta name="description" content="Track what you buy, what you sell, and what you pocket.">
 <meta name="theme-color" content="#0a100e">
@@ -29,7 +34,14 @@
   --tabh:64px;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-html{height:100%}
+/* The DOCUMENT must never scroll. --vvh is a measurement and can land a little
+   taller than the real webview (the screen.height snap); if <html> is allowed to
+   scroll, that overflow lets iOS's keyboard pan shift the entire shell upward —
+   the sheet header slides under the status bar and stays there. Clamping here
+   means a pan has nowhere to go. Only #view and .sheet-body ever scroll.
+   It must be `clip`, NOT `hidden`: hidden is still scrollable programmatically,
+   and iOS's keyboard pan is exactly that kind of scroll. clip cannot move. */
+html{height:100%;overflow:clip;overscroll-behavior:none}
 /* App-shell layout: the BODY never scrolls — #view scrolls internally and the
    tab bar is a normal flex row. No position:fixed nav, so iOS standalone can't
    mis-place it on first paint (the "buttons only work after they jump" bug). */
@@ -37,7 +49,12 @@ html{height:100%}
    dvh/vh (reserves phantom Safari-chrome space). --vvh is measured from
    visualViewport by the inline script below and tracks rotation/resize. */
 body{
-  margin:0;height:100%;height:var(--vvh,100%);overflow:hidden;
+  /* overflow:CLIP, not hidden. `hidden` is still scrollable by the UA, and iOS
+     reveals a focused field by scrolling EVERY scrollable ancestor — including
+     this one. That scrolled the whole shell (sheet + #view + tab bar) upward and
+     nothing ever put it back: the sheet header ended up under the status bar with
+     a dead band beneath the app. `clip` cannot be scrolled by anyone. */
+  margin:0;height:100%;height:var(--vvh,100%);overflow:clip;
   position:relative; /* overlays (sheets/toasts) anchor to the shell, never to position:fixed — fixed mis-anchors on iOS standalone */
   display:flex;flex-direction:column;
   background:var(--bg);color:var(--txt);
@@ -254,12 +271,19 @@ body.locked #view{overflow:hidden}
 .sheet-wrap{position:absolute;inset:0;z-index:60}
 .backdrop{position:absolute;inset:-35% 0;background:rgba(2,6,5,.6);opacity:0;transition:opacity .25s;
   -webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)} /* overdrawn past the shell so iOS keyboard pans can't expose an undimmed strip */
-.sheet{position:absolute;left:0;right:0;bottom:var(--kb,0px);max-width:640px;margin:0 auto;
+/* The panel's geometry is KEYBOARD-INDEPENDENT on purpose. It used to ride the
+   keyboard (bottom:var(--kb) + max-height minus --kb), which meant any bad --kb
+   reading crushed the panel and left a dead gap under it. Now it is pinned to
+   the bottom of the shell and capped by the shell itself (100% = the wrap =
+   body), so a wrong --kb can cost at most some extra scroll padding — never the
+   layout. The keyboard is handled once, inside .sheet-body. */
+.sheet{position:absolute;left:0;right:0;bottom:0;max-width:640px;margin:0 auto;
   background:#101a16;border:1px solid var(--line2);border-bottom:0;
-  border-radius:24px 24px 0 0;max-height:calc(var(--vvh,100vh) - var(--kb,0px) - 48px);
+  border-radius:24px 24px 0 0;max-height:calc(100% - env(safe-area-inset-top) - 8px);
   display:flex;flex-direction:column;
+  overflow:hidden; /* the panel CLIPS its scroller — content can never paint outside the card */
   transform:translateY(103%);
-  transition:transform .3s cubic-bezier(.2,.75,.25,1),bottom .18s ease-out,max-height .18s ease-out;
+  transition:transform .3s cubic-bezier(.2,.75,.25,1);
   box-shadow:0 -12px 44px rgba(0,0,0,.5)}
 .sheet-wrap.open .backdrop{opacity:1}
 .sheet-wrap.open .sheet{transform:none}
@@ -268,9 +292,16 @@ body.locked #view{overflow:hidden}
 .sheet-head h2{margin:0;font-size:19px;font-weight:800;letter-spacing:-.01em}
 .sheet-head .x{width:32px;height:32px;border-radius:50%;border:0;background:rgba(255,255,255,.07);
   color:var(--sub);font-size:15px;cursor:pointer;display:flex;align-items:center;justify-content:center}
-.sheet-body{overflow-y:auto;-webkit-overflow-scrolling:touch;
+/* flex:1 1 auto + min-height:0 = the scroller is the ONLY thing that resizes;
+   it can always shrink to the panel and never pushes content out of the card.
+   (-webkit-overflow-scrolling:touch is deliberately gone — deprecated since
+   iOS 13 and its compositing layer is a known cause of exactly that escape.) */
+.sheet-body{flex:1 1 auto;min-height:0;overflow-y:auto;
   padding:10px 18px calc(20px + env(safe-area-inset-bottom) + var(--kb,0px));
-  scroll-padding:70px 0 90px} /* --kb padding = guaranteed scroll headroom, so a focused field can ALWAYS ride above the keyboard */
+  scroll-padding:70px 0 calc(24px + var(--kb,0px))}
+/* --kb bottom padding = real scroll headroom, and scroll-padding tells WebKit's
+   OWN focus-scroll that the bottom --kb isn't visible — so it lands the field
+   above the keyboard instead of panning the whole page to reach it. */
 
 /* ---------- forms ---------- */
 .sec{display:block;font-size:11px;font-weight:750;text-transform:uppercase;letter-spacing:.08em;
@@ -474,6 +505,25 @@ details.more[open] summary::after{transform:rotate(180deg)}
 (function () {
   var probe = document.getElementById('vv-probe');
   var lastKb = 0, lastH = 0, reserveUntil = 0;
+  // stableH = the shell height measured with NO keyboard in play. Some browsers
+  // shrink the layout viewport when the keyboard opens; if we wrote that into
+  // --vvh the whole app would shrink to the space above the keyboard and stay
+  // there (the black band under the page). So a keyboard-sized DROP while a
+  // field is focused is refused — growth is always allowed.
+  var stableH = 0;
+  function fieldFocused() {
+    var ae = document.activeElement;
+    return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+  }
+  // Visible band in LAYOUT coordinates. getBoundingClientRect() is layout-
+  // relative, so when iOS pans the page (visualViewport.offsetTop > 0) the
+  // visible strip starts at offsetTop — comparing against vv.height alone
+  // misplaces the field by exactly the pan distance.
+  function visBand() {
+    var vvp = window.visualViewport;
+    if (!vvp) return { top: 0, bottom: window.innerHeight };
+    return { top: vvp.offsetTop, bottom: vvp.offsetTop + vvp.height };
+  }
   // Remembered keyboard height for this device — lets us reserve the space
   // BEFORE iOS reacts to a focus, which is the whole trick: once the field
   // is already comfortably placed, WebKit has nothing to pan for.
@@ -491,10 +541,10 @@ details.more[open] summary::after{transform:rotate(180deg)}
     if (!ae || (ae.tagName !== 'INPUT' && ae.tagName !== 'TEXTAREA')) return;
     var sb = ae.closest ? ae.closest('.sheet-body') : null;
     if (!sb) return;
-    var visBottom = ((window.visualViewport && window.visualViewport.height) || window.innerHeight) - 14;
+    var band = visBand();
     var r = ae.getBoundingClientRect();
-    if (r.bottom > visBottom) sb.scrollTop += (r.bottom - visBottom);
-    else if (r.top < 58) sb.scrollTop -= (58 - r.top);
+    if (r.bottom > band.bottom - 14) sb.scrollTop += (r.bottom - (band.bottom - 14));
+    else if (r.top < band.top + 58) sb.scrollTop -= (band.top + 58 - r.top);
   }
   function fit() {
     var vvp = window.visualViewport;
@@ -517,16 +567,25 @@ details.more[open] summary::after{transform:rotate(180deg)}
       h = vv || ih || pr;
     }
     if (h && h > 250) {
-      lastH = Math.round(h);
-      document.documentElement.style.setProperty('--vvh', lastH + 'px');
+      h = Math.round(h);
+      // Refuse a keyboard-sized shrink while typing — that's the browser
+      // resizing the layout viewport, not the screen getting shorter.
+      if (stableH && h < stableH - 60 && (fieldFocused() || Date.now() < reserveUntil)) {
+        lastH = stableH; // keep measuring the keyboard against the real screen
+      } else {
+        stableH = lastH = h;
+        document.documentElement.style.setProperty('--vvh', h + 'px');
+      }
     }
 
     // Measured keyboard overlap (floor 140px: real keyboards are 216px+,
-    // resting viewport lies stay under ~100px). A real measurement refines
+    // resting viewport lies stay under ~100px). offsetTop matters: if iOS has
+    // panned the page, the covered strip is what's left below the panned
+    // visual viewport, not below its bare height. A real measurement refines
     // the pre-reserved estimate; a zero reading is IGNORED while a reserve
-    // is active so the keyboard's animation window can't flicker the sheet.
+    // is active so the keyboard's animation window can't flicker the padding.
     var kb = 0;
-    if (vvp && lastH) kb = Math.max(0, Math.round(lastH - vv));
+    if (vvp && lastH) kb = Math.max(0, Math.round(lastH - vv - (vvp.offsetTop || 0)));
     if (kb < 140) kb = 0;
     if (kb >= 140) {
       kbEst = kb;
@@ -543,7 +602,10 @@ details.more[open] summary::after{transform:rotate(180deg)}
     window.visualViewport.addEventListener('resize', fit);
   }
   window.addEventListener('resize', fit);
-  window.addEventListener('orientationchange', function () { setTimeout(fit, 250); });
+  window.addEventListener('orientationchange', function () {
+    stableH = 0; // the screen really did change shape — re-establish the baseline
+    setTimeout(fit, 250);
+  });
   window.addEventListener('pageshow', fit);
   window.addEventListener('focusin', function (e) {
     var t = e.target;
@@ -561,8 +623,32 @@ details.more[open] summary::after{transform:rotate(180deg)}
   });
   window.addEventListener('focusout', function () {
     reserveUntil = 0;
-    setTimeout(fit, 250);
+    // Undo any pan iOS applied while the field was focused, then re-measure
+    // once the keyboard has finished sliding away.
+    unpan();
+    setTimeout(function () { unpan(); fit(); }, 250);
+    setTimeout(function () { unpan(); fit(); }, 600);
   });
+  // The document must sit at scroll 0 — the shell IS the screen. iOS still pans
+  // it to reveal a focused field (overflow:clip on the root doesn't stop that),
+  // and a pan left in place after the keyboard closes is what strands the whole
+  // app shifted up with its header under the status bar. So snap back, but only
+  // at REST: never mid-type, or we'd be tugging against WebKit every frame while
+  // it tries to place the field (that fight is the old jump-loop, LM-51).
+  function unpan() {
+    if (window.scrollY || window.pageYOffset) window.scrollTo(0, 0);
+    // The BODY is the one that actually gets scrolled by iOS's field reveal —
+    // window.scrollY reads 0 the whole time, which is why this hid for so long.
+    if (document.body.scrollTop) document.body.scrollTop = 0;
+    if (document.documentElement.scrollTop) document.documentElement.scrollTop = 0;
+  }
+  document.addEventListener('scroll', function (e) {
+    var t = e.target;
+    if (t !== document && t !== document.body && t !== document.documentElement) return; // ignore #view / .sheet-body
+    if (fieldFocused() || Date.now() < reserveUntil) return;
+    unpan();
+  }, true);
+
   setTimeout(fit, 60); setTimeout(fit, 400); // iOS settles the viewport late on cold launch
 
   // hard orientation lock where the platform allows it (Android standalone);
