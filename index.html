@@ -319,6 +319,28 @@ textarea.in{height:auto;min-height:74px;padding:11px 13px;resize:vertical;line-h
 .money .in{padding-left:28px}
 input[type=date].in{appearance:none;-webkit-appearance:none;min-width:0}
 input[type=date].in::-webkit-calendar-picker-indicator{filter:invert(.6);opacity:.8}
+/* ---------- dropdown picker ----------
+   The panel expands INLINE (normal flow). These sit inside .sheet-body, which
+   is overflow-y:auto — an absolutely-positioned panel would be clipped by it.
+   In-flow expansion pushes the fields below down and the scroller copes. */
+.picker{position:relative}
+.picker-trigger{width:100%;height:48px;padding:0 13px;border-radius:13px;border:1px solid var(--line2);
+  background:rgba(255,255,255,.05);color:var(--txt);font-size:16px;font-family:inherit;
+  display:flex;align-items:center;justify-content:space-between;gap:10px;cursor:pointer;text-align:left}
+.picker.open .picker-trigger{border-color:rgba(52,211,153,.5);background:rgba(52,211,153,.05)}
+.picker-label{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.picker-chev{width:17px;height:17px;flex:none;color:var(--faint);transition:transform .18s}
+.picker.open .picker-chev{transform:rotate(180deg);color:var(--em)}
+.picker-panel{margin-top:6px;border:1px solid var(--line2);border-radius:13px;overflow:hidden;
+  background:rgba(255,255,255,.035)}
+.picker-panel[hidden]{display:none}
+.picker-opt{display:block;width:100%;text-align:left;padding:12px 13px;border:0;background:none;
+  color:var(--sub);font-size:15px;font-family:inherit;cursor:pointer;
+  border-bottom:1px solid var(--line2)}
+.picker-opt:last-child{border-bottom:0}
+.picker-opt:active{background:rgba(255,255,255,.05)}
+.picker-opt.on{color:var(--em);font-weight:700;background:rgba(52,211,153,.08)}
+
 .chips{display:flex;flex-wrap:wrap;gap:7px}
 .chip{border:1px solid var(--line2);background:rgba(255,255,255,.05);color:var(--sub);
   border-radius:99px;padding:8.5px 13px;font-size:13px;font-weight:600;font-family:inherit;cursor:pointer;

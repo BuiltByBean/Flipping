@@ -1,5 +1,5 @@
 /* Flips service worker — offline-first, stale-while-revalidate. */
-const CACHE = 'flips-v1.16.0';
+const CACHE = 'flips-v1.17.0';
 const CORE = [
   './',
   './index.html',
@@ -13,7 +13,18 @@ const CORE = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(CORE)).then(() => self.skipWaiting()));
+  // cache:'reload' is load-bearing. A plain addAll() may be served from the
+  // browser's own HTTP cache, which would precache the OLD app.js into the NEW
+  // cache — a version bump that silently ships stale code. Force the network.
+  e.waitUntil(
+    caches.open(CACHE)
+      .then((c) => Promise.all(CORE.map((u) =>
+        fetch(u, { cache: 'reload' }).then((res) => {
+          if (res && res.ok) return c.put(u, res);
+        })
+      )))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener('activate', (e) => {

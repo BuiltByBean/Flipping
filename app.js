@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.16.0';
+const APP_VERSION = '1.17.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -30,18 +30,17 @@ const CATS = [
   ['other', 'Other', '📦'],
 ];
 const PLATFORMS = [
-  ['facebook', 'FB Marketplace'],
-  ['ebay', 'eBay'],
+  ['facebook', 'Facebook'],
   ['offerup', 'OfferUp'],
-  ['craigslist', 'Craigslist'],
-  ['mercari', 'Mercari'],
-  ['local', 'Local / cash'],
-  ['other', 'Other'],
+  ['local', 'Local'],
 ];
+// Retired platforms: no longer offered, but an old record that still carries one
+// must keep reading correctly instead of silently becoming "Other".
+const RETIRED_PLATFORMS = { ebay: 'eBay', craigslist: 'Craigslist', mercari: 'Mercari', other: 'Other' };
 const srcLabel = (k) => (SOURCES.find((s) => s[0] === k) || ['', 'Other'])[1];
 const catLabel = (k) => (CATS.find((c) => c[0] === k) || ['', 'Other'])[1];
 const catEmoji = (k) => (CATS.find((c) => c[0] === k) || ['', '', '📦'])[2];
-const viaLabel = (k) => (PLATFORMS.find((p) => p[0] === k) || ['', 'Other'])[1];
+const viaLabel = (k) => (PLATFORMS.find((p) => p[0] === k) || ['', RETIRED_PLATFORMS[k] || 'Other'])[1];
 
 /* ---------------- tiny utils ---------------- */
 const $ = (s, r) => (r || document).querySelector(s);
@@ -820,6 +819,62 @@ function closeSheet() {
 function sheetHead(title) {
   return '<div class="sheet-head"><h2>' + esc(title) + '</h2><button class="x" data-close-sheet aria-label="Close">✕</button></div>';
 }
+/* Single-choice dropdown. The panel is an INLINE EXPANSION (normal flow), not an
+   absolute popover: these live inside .sheet-body, which is overflow-y:auto and
+   would clip a positioned panel. Expanding in flow pushes the following fields
+   down and the sheet's own scroller handles it. */
+function pickerHTML(name, options, selected) {
+  const cur = options.find((o) => o[0] === selected) || options[0];
+  const val = cur ? cur[0] : '';
+  return '<div class="picker" data-picker="' + name + '">' +
+    '<input type="hidden" name="' + name + '" value="' + esc(val) + '">' +
+    '<button type="button" class="picker-trigger" data-picker-toggle>' +
+      '<span class="picker-label">' + esc(cur ? cur[1] : 'Select…') + '</span>' +
+      '<svg class="picker-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>' +
+    '</button>' +
+    '<div class="picker-panel" hidden>' +
+      options.map((o) => '<button type="button" class="picker-opt' + (o[0] === val ? ' on' : '') +
+        '" data-val="' + esc(o[0]) + '">' + esc(o[1]) + '</button>').join('') +
+    '</div></div>';
+}
+function closePickers(except) {
+  $$('.picker.open').forEach((p) => {
+    if (p === except) return;
+    p.classList.remove('open');
+    const panel = $('.picker-panel', p);
+    if (panel) panel.hidden = true;
+  });
+}
+function togglePicker(p) {
+  const panel = $('.picker-panel', p);
+  if (!panel) return;
+  const opening = !p.classList.contains('open');
+  closePickers(p);
+  p.classList.toggle('open', opening);
+  panel.hidden = !opening;
+  if (!opening) return;
+  // Keep the freshly-opened list on screen: one-shot, bounded nudge of the
+  // sheet's own scroller (never scrollIntoView — that oscillates, LM-51).
+  const sb = p.closest('.sheet-body');
+  if (!sb) return;
+  requestAnimationFrame(() => {
+    const over = panel.getBoundingClientRect().bottom - (sb.getBoundingClientRect().bottom - 12);
+    if (over > 0) sb.scrollTop += over;
+  });
+}
+function choosePickerOption(opt) {
+  const p = opt.closest('.picker');
+  if (!p) return;
+  $$('.picker-opt', p).forEach((o) => o.classList.remove('on'));
+  opt.classList.add('on');
+  const hidden = $('input[type=hidden]', p);
+  if (hidden) hidden.value = opt.dataset.val;
+  const lab = $('.picker-label', p);
+  if (lab) lab.textContent = opt.textContent;
+  p.classList.remove('open');
+  const panel = $('.picker-panel', p);
+  if (panel) panel.hidden = true;
+}
 function chipsHTML(name, options, selected) {
   return '<div class="chips" data-chips="' + name + '">' +
     '<input type="hidden" name="' + name + '" value="' + esc(selected || '') + '">' +
@@ -830,10 +885,15 @@ function chipsHTML(name, options, selected) {
 function peopleChipsHTML(kind, selected) {
   const people = ownersList();
   if (selected && !people.includes(selected)) people.unshift(selected);
-  const noneLabel = kind === 'person' ? 'Not set' : 'Unassigned';
+  // A flip ALWAYS has an owner — only the device identity ('person') may be
+  // unset, so the "none" chip exists there and nowhere else. With no none
+  // option, fall back to this device's person (then the busiest owner) so the
+  // form never opens with nothing selected.
+  const allowNone = kind === 'person';
+  if (!allowNone && !selected) selected = syncState.person || people[0] || '';
   return '<div class="chips" data-chips="' + kind + '">' +
     '<input type="hidden" name="' + kind + '" value="' + esc(selected || '') + '">' +
-    '<button type="button" class="chip' + (!selected ? ' sel' : '') + '" data-val="">' + noneLabel + '</button>' +
+    (allowNone ? '<button type="button" class="chip' + (!selected ? ' sel' : '') + '" data-val="">Not set</button>' : '') +
     people.map((p) => '<button type="button" class="chip' + (p === selected ? ' sel' : '') + '" data-val="' + esc(p) + '">' + esc(p) + '</button>').join('') +
     '<button type="button" class="chip" data-val="__new">+ New person</button>' +
     '</div>';
@@ -928,7 +988,7 @@ function openItemSheet(id) {
       '<div class="money"><input class="in" name="sellPrice" inputmode="decimal" placeholder="0" value="' + (it.sellPrice != null ? it.sellPrice : '') + '"></div>' +
       '<input class="in" type="date" name="sellDate" value="' + (it.sellDate || todayYMD()) + '">' +
       '</div>' +
-      '<label class="sec">Sold via</label>' + chipsHTML('soldVia', PLATFORMS, it.soldVia || 'other') +
+      '<label class="sec">Sold via</label>' + chipsHTML('soldVia', PLATFORMS, it.soldVia || 'facebook') +
       '<label class="sec">Fees &amp; shipping</label>' +
       '<div class="money"><input class="in" name="fees" inputmode="decimal" placeholder="0" value="' + (it.fees || '') + '"></div>';
   }
@@ -956,7 +1016,7 @@ function openItemSheet(id) {
     '</div>' +
 
     '<label class="sec">Where you found it</label>' + chipsHTML('source', SOURCES, it ? it.source : 'facebook') +
-    '<label class="sec">Category</label>' + chipsHTML('category', CATS.map((c) => [c[0], c[2] + ' ' + c[1]]), it ? it.category : 'other') +
+    '<label class="sec">Category</label>' + pickerHTML('category', CATS.map((c) => [c[0], c[1]]), it ? it.category : 'other') +
     '<label class="sec">Whose flip is this?</label>' + peopleChipsHTML('owner', it ? it.owner : (syncState.person || '')) +
 
     saleSec +
@@ -1333,6 +1393,14 @@ async function saveItemForm(f) {
   const buy = parseMoney(fd.get('buyPrice'));
   if (!name) { toast('Give it a name', 'warn'); const i = $('input[name=name]', f); if (i) { i.classList.add('err'); i.focus(); } return; }
   if (buy == null) { toast('Enter what you paid', 'warn'); const i = $('input[name=buyPrice]', f); if (i) { i.classList.add('err'); i.focus(); } return; }
+  // A flip always belongs to someone. Only reachable before any person exists
+  // (the owner chips would be empty), so point at the button that fixes it.
+  if (!String(fd.get('owner') || '').trim()) {
+    toast('Pick whose flip this is', 'warn');
+    const g = $('[data-chips="owner"]', f);
+    if (g) { const nw = $('.chip[data-val="__new"]', g); if (nw) nw.click(); }
+    return;
+  }
 
   let it = id ? items.find((x) => x.id === id) : null;
   const base = it ? it : normItem({});
@@ -1359,7 +1427,7 @@ async function saveItemForm(f) {
     const sp = parseMoney(fd.get('sellPrice'));
     if (sp != null) base.sellPrice = sp;
     base.sellDate = validYMD(fd.get('sellDate')) || base.sellDate;
-    base.soldVia = String(fd.get('soldVia') || base.soldVia || 'other');
+    base.soldVia = String(fd.get('soldVia') || base.soldVia || 'facebook');
     const fe = parseMoney(fd.get('fees'));
     if (fe != null) base.fees = fe;
   }
@@ -1382,7 +1450,7 @@ async function saveSoldForm(f) {
   it.status = 'sold';
   it.sellPrice = sp;
   it.sellDate = validYMD(fd.get('sellDate')) || todayYMD();
-  it.soldVia = String(fd.get('soldVia') || 'other');
+  it.soldVia = String(fd.get('soldVia') || 'facebook');
   it.fees = parseMoney(fd.get('fees')) || 0;
   touch(it);
   await store.save(it);
@@ -1598,6 +1666,13 @@ function setView(v) {
 /* ---------------- event delegation ---------------- */
 document.addEventListener('click', (e) => {
   const t = e.target;
+
+  // dropdowns: toggle / choose, and any click elsewhere dismisses an open one
+  const pickToggle = t.closest('[data-picker-toggle]');
+  if (pickToggle) { togglePicker(pickToggle.closest('.picker')); return; }
+  const pickOpt = t.closest('.picker-opt');
+  if (pickOpt) { choosePickerOption(pickOpt); return; }
+  closePickers(null);
 
   const closeBtn = t.closest('[data-close-sheet]');
   if (closeBtn) { closeSheet(); return; }
@@ -1827,6 +1902,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) sync
 
 /* inline "new person" input commit */
 document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && $('.picker.open')) { closePickers(null); return; }
   if (!e.target.classList || !e.target.classList.contains('chip-in')) return;
   if (e.key === 'Enter') { e.preventDefault(); commitNewPerson(e.target.closest('[data-chips]'), e.target.value); }
   else if (e.key === 'Escape') { commitNewPerson(e.target.closest('[data-chips]'), ''); }
