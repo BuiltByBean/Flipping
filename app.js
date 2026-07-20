@@ -5,7 +5,7 @@
    ============================================================ */
 'use strict';
 
-const APP_VERSION = '1.17.0';
+const APP_VERSION = '1.18.0';
 
 /* ---------------- constants ---------------- */
 const SOURCES = [
@@ -456,8 +456,14 @@ function computeTaxes(year) {
   return { year: String(year), sold, net, se, incomeTax, qbiDed, total, eff, afterTax: net - total, cfg };
 }
 
-const GEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="15" cy="6" r="2.3" fill="#0a100e"/><circle cx="9" cy="12" r="2.3" fill="#0a100e"/><circle cx="16" cy="18" r="2.3" fill="#0a100e"/></svg>';
+const GEAR_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>';
 const gearBtnHTML = () => '<button class="gearbtn" data-view="settings" aria-label="Settings">' + GEAR_SVG + '</button>';
+/* Every view is a PINNED head (title + any filter bar + the gear) over a single
+   scrolling body. Keeping this split in one helper means "the header never
+   scrolls" is structural, not something each render has to remember. */
+function viewShell(head, body) {
+  return '<div class="vhead">' + head + '</div><div class="vscroll">' + body + '</div>';
+}
 
 const MARK_SVG = '<svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">' +
   '<defs><linearGradient id="mg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#34d399"/><stop offset="1" stop-color="#0d9488"/></linearGradient></defs>' +
@@ -469,22 +475,22 @@ const MARK_SVG = '<svg class="mark" viewBox="0 0 64 64" xmlns="http://www.w3.org
 function renderDashboard() {
   const s = computeStats();
   const dateStr = new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-  let h = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b>' + syncPillHTML() + '<span class="date">' + dateStr + '</span>' + gearBtnHTML() + '</div>';
+  const head = '<div class="brand rise">' + MARK_SVG + '<b>Flips</b>' + syncPillHTML() + '<span class="date">' + dateStr + '</span>' + gearBtnHTML() + '</div>';
 
   if (!live().length) {
-    h += '<div class="card hero rise" style="text-align:center;padding:34px 20px">' +
+    $('#view').innerHTML = viewShell(head,
+      '<div class="card hero rise" style="text-align:center;padding:34px 20px">' +
       '<div class="big" style="font-size:46px">🏷️</div>' +
       '<h3 style="margin:10px 0 5px;font-size:20px;font-weight:800">Start flipping</h3>' +
       '<p style="margin:0 auto 20px;color:var(--sub);font-size:14px;max-width:280px">Log what you buy at garage sales, estate sales and FB Marketplace — then watch the profit stack up.</p>' +
       '<button class="btn btn-primary btn-big" data-action="add" style="max-width:260px">+ Add your first flip</button>' +
       '<div style="margin-top:14px"><button class="btn btn-ghost" data-action="sample" style="color:var(--sub);font-size:13px">or load sample data to explore</button></div>' +
-      '</div>';
-    $('#view').innerHTML = h;
+      '</div>');
     return;
   }
 
   const heroCls = s.profit >= 0 ? 'pos' : 'neg';
-  h += '<div class="card hero rise">' +
+  let h = '<div class="card hero rise">' +
     '<div class="lbl">Total profit</div>' +
     '<div class="num ' + heroCls + '" id="hero-num" data-target="' + s.profit + '">' + money(s.profit, true) + '</div>' +
     '<div class="sub">' + s.sold.length + ' sold · ' + s.inv.length + ' in inventory</div>' +
@@ -553,7 +559,7 @@ function renderDashboard() {
       '<div style="color:var(--sub);font-size:13.5px;max-width:300px;margin:0 auto">Mark your first item sold and this turns into source &amp; category analytics.</div></div>';
   }
 
-  $('#view').innerHTML = h;
+  $('#view').innerHTML = viewShell(head, h);
   animateHero();
 }
 
@@ -647,15 +653,16 @@ function renderInvList() {
   }).join('');
 }
 function renderInventory() {
-  $('#view').innerHTML =
+  const head =
     '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Inventory</h1><div class="sub">Stuff you’re holding, waiting to sell</div></div>' + gearBtnHTML() + '</div>' +
     '<div class="toolbar rise">' +
     '<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>' +
     '<input id="inv-q" type="search" placeholder="Search inventory" value="' + esc(invQuery) + '" autocomplete="off"></div>' +
     '<button class="sortbtn" data-cycle="inv">' + INV_SORTS[invSort] + ' ▾</button>' +
-    '</div>' +
+    '</div>';
+  $('#view').innerHTML = viewShell(head,
     '<div class="sumline" id="inv-sum"></div>' +
-    '<div class="list" id="inv-list"></div>';
+    '<div class="list" id="inv-list"></div>');
   renderInvList();
 }
 
@@ -712,15 +719,16 @@ function renderSoldList() {
   box.innerHTML = h;
 }
 function renderSold() {
-  $('#view').innerHTML =
+  const head =
     '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Sold</h1><div class="sub">Every flip you’ve closed out</div></div>' + gearBtnHTML() + '</div>' +
     '<div class="toolbar rise">' +
     '<div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.2-3.2"/></svg>' +
     '<input id="sold-q" type="search" placeholder="Search sales" value="' + esc(soldQuery) + '" autocomplete="off"></div>' +
     '<button class="sortbtn" data-cycle="sold">' + SOLD_SORTS[soldSort] + ' ▾</button>' +
-    '</div>' +
+    '</div>';
+  $('#view').innerHTML = viewShell(head,
     '<div class="sumline" id="sold-sum"></div>' +
-    '<div class="list" id="sold-list"></div>';
+    '<div class="list" id="sold-list"></div>');
   renderSoldList();
 }
 
@@ -749,8 +757,8 @@ function renderSettings() {
     installRow = '<div class="srow"><div class="ic">📲</div><div class="tx"><b>Install as app</b><small>In your browser menu: "Install app" / "Add to Home screen"</small></div></div>';
   }
 
-  $('#view').innerHTML =
-    '<div class="lt rise"><h1>Settings</h1><div class="sub">Synced to your private server — offline-safe</div></div>' +
+  $('#view').innerHTML = viewShell(
+    '<div class="lt rise"><h1>Settings</h1><div class="sub">Synced to your private server — offline-safe</div></div>',
 
     '<div class="card rise"><h2>People &amp; sync <span class="hint" id="sync-status-line">' + syncDetailLine() + '</span></h2>' +
     '<div class="srow" style="border-bottom:0;padding-bottom:8px"><div class="ic">🙋</div><div class="tx"><b>Who’s flipping on this phone?</b><small>Your flips get tagged to this name — that’s the whole login</small></div></div>' +
@@ -782,7 +790,7 @@ function renderSettings() {
     '<div class="srow"><div class="ic">⚠️</div><div class="tx"><b>Delete everything</b><small>Wipes all items on this device</small></div><button class="btn btn-mini btn-danger" data-action="wipe">Delete</button></div>' +
     '</div>' +
 
-    '<div class="foot">Flips v' + APP_VERSION + ' · built by <b>Bean</b><br>Offline-first · syncs to your own Railway Postgres.</div>';
+    '<div class="foot">Flips v' + APP_VERSION + ' · built by <b>Bean</b><br>Offline-first · syncs to your own Railway Postgres.</div>');
 
   if (navigator.storage && navigator.storage.estimate) {
     navigator.storage.estimate().then((e) => {
@@ -1287,9 +1295,9 @@ let taxYearSel = null;
 function renderTaxes() {
   const ys = taxYears();
   if (!taxYearSel || !ys.includes(taxYearSel)) taxYearSel = defaultTaxYear();
-  $('#view').innerHTML =
-    '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Taxes</h1><div class="sub">Estimates for your Texas LLC — not tax advice</div></div>' + gearBtnHTML() + '</div>' +
-    '<div class="card rise" id="tax-body" style="grid-column:1/-1;max-width:820px">' + taxBodyHTML() + '</div>';
+  $('#view').innerHTML = viewShell(
+    '<div class="lt rise" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px"><div><h1>Taxes</h1><div class="sub">Estimates for your Texas LLC — not tax advice</div></div>' + gearBtnHTML() + '</div>',
+    '<div class="card rise" id="tax-body" style="grid-column:1/-1;max-width:820px">' + taxBodyHTML() + '</div>');
 }
 function refreshTaxes() {
   const b = $('#tax-body');
@@ -1646,11 +1654,17 @@ async function removeSample() {
 
 /* ---------------- view dispatch ---------------- */
 function render() {
+  // .vscroll is rebuilt on every render, so its scrollTop resets to 0. Preserve
+  // it across a same-view re-render (e.g. after marking an item sold) so the
+  // list doesn't jump to the top; setView overrides this back to 0 on a switch.
+  const prev = ($('.vscroll') || {}).scrollTop || 0;
   if (view === 'dashboard') renderDashboard();
   else if (view === 'inventory') renderInventory();
   else if (view === 'sold') renderSold();
   else if (view === 'taxes') renderTaxes();
   else renderSettings();
+  const sc = $('.vscroll');
+  if (sc && prev) { sc.scrollTop = prev; if (sc.scrollTop > 2) sc.previousElementSibling.classList.add('scrolled'); }
   requestAnimationFrame(() => requestAnimationFrame(() => {
     $$('.hfill').forEach((f) => f.classList.add('go'));
   }));
@@ -1658,10 +1672,18 @@ function render() {
 function setView(v) {
   view = v;
   $$('#tabbar .tab').forEach((t) => t.classList.toggle('on', t.dataset.view === v));
-  const sc = $('#view');
-  if (sc) sc.scrollTop = 0;
   render();
+  const sc = $('.vscroll'); // the scroller is rebuilt by render(); reset it after
+  if (sc) sc.scrollTop = 0;
 }
+// Give the pinned header a hairline/shadow once its body is scrolled. Capturing
+// listener because scroll doesn't bubble and .vscroll is replaced every render.
+document.addEventListener('scroll', (e) => {
+  const t = e.target;
+  if (!t || !t.classList || !t.classList.contains('vscroll')) return;
+  const head = t.previousElementSibling;
+  if (head && head.classList.contains('vhead')) head.classList.toggle('scrolled', t.scrollTop > 2);
+}, true);
 
 /* ---------------- event delegation ---------------- */
 document.addEventListener('click', (e) => {

@@ -1,5 +1,5 @@
 /* Flips service worker — offline-first, stale-while-revalidate. */
-const CACHE = 'flips-v1.17.0';
+const CACHE = 'flips-v1.18.0';
 const CORE = [
   './',
   './index.html',

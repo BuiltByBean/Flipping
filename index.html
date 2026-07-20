@@ -68,14 +68,30 @@ body::before{ /* ambient glow */
     radial-gradient(600px 420px at 85% -5%,rgba(16,185,129,.13),transparent 65%),
     radial-gradient(500px 380px at -10% 30%,rgba(45,212,191,.07),transparent 60%);
 }
+/* #view is a NON-scrolling flex column: a PINNED .vhead (page title + the
+   search/filter bar — these must never scroll away) and a .vscroll body that
+   is the only thing that moves. Same head/scroll split the sheets use.
+   Because the gear sits in .vhead, it's pinned for free on every page. */
 #view{
   position:relative;z-index:1;flex:1;min-height:0;
-  overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-y:contain;
-  padding:calc(env(safe-area-inset-top) + 14px) 16px 46px;
+  overflow:hidden;display:flex;flex-direction:column;
 }
-#view > *{max-width:640px;margin-left:auto;margin-right:auto}
-body.locked #view{overflow:hidden}
-@media(min-width:900px){ #view{padding-top:36px} #view > *{max-width:760px} }
+.vhead{
+  flex:none;position:relative;z-index:2;
+  padding:calc(env(safe-area-inset-top) + 14px) 16px 8px;
+}
+.vhead > *{max-width:640px;margin-left:auto;margin-right:auto}
+.vhead.scrolled{box-shadow:0 8px 18px -12px rgba(0,0,0,.7)}
+.vhead::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;
+  background:var(--line2);opacity:0;transition:opacity .2s}
+.vhead.scrolled::after{opacity:1} /* hairline appears once the body scrolls */
+.vscroll{
+  flex:1;min-height:0;overflow-y:auto;overscroll-behavior-y:contain;
+  padding:8px 16px 46px;
+}
+.vscroll > *{max-width:640px;margin-left:auto;margin-right:auto}
+body.locked .vscroll{overflow:hidden}
+@media(min-width:900px){ .vhead{padding-top:36px} .vhead > *,.vscroll > *{max-width:760px} }
 
 /* ---------- typography blocks ---------- */
 .lt{margin:6px 2px 16px}
@@ -238,10 +254,12 @@ body.locked #view{overflow:hidden}
 .tab svg{width:23px;height:23px}
 .tab.on{color:var(--em)}
 #tabbar .tab[data-view="settings"]{display:none} /* mobile: settings lives behind the gear */
-.gearbtn{width:38px;height:38px;border-radius:12px;border:1px solid var(--line2);background:rgba(255,255,255,.05);
-  color:var(--sub);display:inline-flex;align-items:center;justify-content:center;flex:none;cursor:pointer;padding:0}
-.gearbtn svg{width:19px;height:19px}
-.gearbtn:active{transform:scale(.93)}
+/* no box: a bare gear glyph, pinned in .vhead so it never scrolls away */
+.gearbtn{width:34px;height:34px;border:0;background:none;padding:0;
+  color:var(--sub);display:inline-flex;align-items:center;justify-content:center;flex:none;cursor:pointer}
+.gearbtn svg{width:23px;height:23px}
+.gearbtn:active{transform:rotate(30deg) scale(.92)}
+.gearbtn:hover{color:var(--txt)}
 
 /* portrait-only on phones: iOS ignores manifest orientation, so landscape
    gets a full-screen "rotate back" guard instead of a broken layout */
@@ -483,25 +501,29 @@ details.more[open] summary::after{transform:rotate(180deg)}
   .fab svg{width:20px;height:20px}
   .fab-label{display:inline}
 
-  #view{
+  /* the pinned head and the scrolling grid share the same horizontal gutters
+     so the title lines up with the cards below it */
+  .vhead{padding:36px max(40px,calc((100% - 1160px)/2)) 12px}
+  .vhead > *{max-width:none;margin:0}
+  .vhead .toolbar{max-width:560px}
+  .vscroll{
     display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:14px 16px;
     align-content:start;align-items:start;
-    padding:36px max(40px,calc((100% - 1160px)/2)) 64px;
+    padding:14px max(40px,calc((100% - 1160px)/2)) 64px;
   }
-  #view > *{grid-column:1/-1;max-width:none;margin-left:0;margin-right:0}
-  #view > .card{grid-column:span 6;margin-bottom:0}
-  #view > .card.hero{grid-column:1/-1}
+  .vscroll > *{grid-column:1/-1;max-width:none;margin-left:0;margin-right:0}
+  .vscroll > .card{grid-column:span 6;margin-bottom:0}
+  .vscroll > .card.hero{grid-column:1/-1}
   .stats{margin-bottom:0}
-  .toolbar{max-width:560px}
 
   .list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
   .list .mgroup{grid-column:1/-1}
   .list .empty{grid-column:1/-1}
   .item:hover{border-color:rgba(255,255,255,.14);background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.035))}
 
-  #view::-webkit-scrollbar{width:10px}
-  #view::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px;border:3px solid var(--bg)}
-  #view::-webkit-scrollbar-track{background:transparent}
+  .vscroll::-webkit-scrollbar{width:10px}
+  .vscroll::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px;border:3px solid var(--bg)}
+  .vscroll::-webkit-scrollbar-track{background:transparent}
 
   .sheet{
     left:50%;right:auto;bottom:auto;top:50%;width:540px;max-width:94vw;
@@ -717,7 +739,7 @@ details.more[open] summary::after{transform:rotate(180deg)}
     <span>Taxes</span>
   </button>
   <button class="tab" data-view="settings" aria-label="Settings">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="15" cy="6" r="2.3" fill="#0a100e"/><circle cx="9" cy="12" r="2.3" fill="#0a100e"/><circle cx="16" cy="18" r="2.3" fill="#0a100e"/></svg>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
     <span>Settings</span>
   </button>
 </nav>
